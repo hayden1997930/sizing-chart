@@ -5,15 +5,8 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
 # ============ 尺碼表 ============
+# 只有汗衣需要尺碼轉換
 HAN_YI_CHART = [(38, "S"), (40, "M"), (42, "L"), (44, "XL"), (46, "XXL")]
-LAN_CHI_SHIRT = {
-    "S": {"a": 14, "b": 31}, "M": {"a": 15, "b": 33},
-    "L": {"a": 16, "b": 35}, "XL": {"a": 17, "b": 37},
-}
-LAN_CHI_PANTS = {
-    "S": {"waist": 28, "length": 40}, "M": {"waist": 30, "length": 41},
-    "L": {"waist": 32, "length": 42}, "XL": {"waist": 34, "length": 43},
-}
 ALL_ITEMS = ["汗衣", "藍扯衫", "藍扯褲"]
 
 # ============ Google Sheets 連接 ============
@@ -45,24 +38,13 @@ def save_data(data):
         st.error(f"儲存資料失敗: {e}")
         return False
 
-# ============ 尺寸 → 尺碼 ============
+# ============ 尺寸 → 尺碼 (只限汗衣) ============
 def to_size(item_type, dims):
     if item_type == "汗衣":
         if "chest" not in dims:
             return None
         return min(HAN_YI_CHART, key=lambda x: abs(x[0] - dims["chest"]))[1]
-    
-    chart = {"藍扯衫": LAN_CHI_SHIRT, "藍扯褲": LAN_CHI_PANTS}.get(item_type)
-    if not chart:
-        return None
-    best, best_err = None, float("inf")
-    for size, ref in chart.items():
-        if not all(k in dims for k in ref):
-            continue
-        err = sum((ref[k] - dims[k]) ** 2 for k in ref)
-        if err < best_err:
-            best, best_err = size, err
-    return best
+    return None  # 藍扯衫、藍扯褲不需要尺碼
 
 # ============ 推薦演算法 ============
 def recommend_one(item_type, height, weight, top_n=10):
@@ -120,6 +102,7 @@ with tab1:
                         st.info(f"❌ {t}：資料庫尚無此品類資料")
                         continue
                     
+                    # 組合部位尺寸字串
                     if t == "汗衣":
                         dim_str = f"胸寬 {r['dims'].get('chest','?')} 吋"
                     elif t == "藍扯衫":
@@ -129,10 +112,18 @@ with tab1:
                         
                     with st.container(border=True):
                         st.markdown(f"### {t}")
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("建議尺寸", dim_str)
-                        c2.metric("建議尺碼", r["size"] or "—")
-                        c3.metric("信心度", f"{r['conf']:.0%}")
+                        
+                        # 如果係汗衣，顯示尺寸＋尺碼；其他只顯示尺寸
+                        if t == "汗衣":
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("建議尺寸", dim_str)
+                            c2.metric("建議尺碼", r["size"] or "—")
+                            c3.metric("信心度", f"{r['conf']:.0%}")
+                        else:
+                            c1, c2 = st.columns(2)
+                            c1.metric("建議尺寸", dim_str)
+                            c2.metric("信心度", f"{r['conf']:.0%}")
+                            
                         if r["conf"] < 0.5:
                             st.caption("⚠️ 信心度偏低，建議試穿")
 
@@ -199,10 +190,11 @@ with tab3:
             for p in rows:
                 d = p["items"][t]
                 parts = "  ".join(f"{k}={v}" for k, v in d.items())
-                table.append({"姓名": p["name"], "身高": p["height"], "體重": p["weight"], "尺寸": parts, "尺碼": to_size(t, d)})
+                # 只有汗衣在資料分佈表顯示尺碼
+                size_display = to_size(t, d) if t == "汗衣" else "—"
+                table.append({"姓名": p["name"], "身高": p["height"], "體重": p["weight"], "尺寸": parts, "尺碼": size_display})
             st.dataframe(table, use_container_width=True, hide_index=True)
 
-        # 匯出 / 清除
         st.markdown("---")
         c1, c2 = st.columns(2)
         with c1:
