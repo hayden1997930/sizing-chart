@@ -56,7 +56,7 @@ def recommend_one(item_type, height, weight, top_n=10):
     scored = []
     for p in data:
         p_bmi = p["weight"] / (p["height"] / 100) ** 2
-        dist = ((p["height"] - height) / 5) ** 2 + ((p_bmi - bmi) / 2) ** 2
+        dist = ((p["height"] - height) / 2) ** 2 + ((p_bmi - bmi) / 2) ** 2
         scored.append((dist, p["items"][item_type]))
         
     scored.sort(key=lambda x: x[0])
@@ -71,7 +71,12 @@ def recommend_one(item_type, height, weight, top_n=10):
             
     dims = {k: round(v / total_w, 1) for k, v in dims_sum.items()}
     size = to_size(item_type, dims)
-    conf = (1 / (neighbors[0][0] + 0.1)) / total_w
+    if len(neighbors) == 1:
+        conf = 0.3  # 只有 1 筆資料，信心度固定 30%
+    else:
+        avg_dist = sum(d for d, _ in neighbors) / len(neighbors)
+        conf = 0.95 / (1 + avg_dist)  # 距離越遠，信心度越低
+
     return {"dims": dims, "size": size, "conf": conf}
 
 # ============ 介面設計 ============
