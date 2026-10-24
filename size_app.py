@@ -195,7 +195,14 @@ with tab3:
             table = []
             for p in rows:
                 d = p["items"][t]
-                parts = "  ".join(f"{k}={v}" for k, v in d.items())
+                                if t == "汗衣":
+                    parts = f"胸寬 {d.get('chest', '')}"
+                elif t == "藍扯衫":
+                    parts = f"{d.get('a', '')} x {d.get('b', '')}"
+                elif t == "藍扯褲":
+                    parts = f"{d.get('waist', '')} x {d.get('length', '')}"
+                else:
+                    parts = "  ".join(f"{k}={v}" for k, v in d.items())
                 # 只有汗衣在資料分佈表顯示尺碼
                 size_display = to_size(t, d) if t == "汗衣" else "—"
                 table.append({"姓名": p["name"], "身高": p["height"], "體重": p["weight"], "尺寸": parts, "尺碼": size_display})
