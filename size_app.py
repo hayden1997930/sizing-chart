@@ -103,12 +103,13 @@ with tab1:
                         continue
                     
                     # 組合部位尺寸字串                    # 組合部位尺寸字串（統一格式，避免文字過長被截斷）
+                                        # 組合部位尺寸字串（純數字，不顯示吋）
                     if t == "汗衣":
-                        dim_str = f"{r['dims'].get('chest','?')} 吋"
+                        dim_str = f"{r['dims'].get('chest','?')}"
                     elif t == "藍扯衫":
-                        dim_str = f"{r['dims'].get('a','?')} x {r['dims'].get('b','?')} 吋"
+                        dim_str = f"{r['dims'].get('a','?')} x {r['dims'].get('b','?')}"
                     elif t == "藍扯褲":
-                        dim_str = f"{r['dims'].get('waist','?')} x {r['dims'].get('length','?')} 吋"
+                        dim_str = f"{r['dims'].get('waist','?')} x {r['dims'].get('length','?')}"
                         
                     with st.container(border=True):
                         st.markdown(f"### {t}")
