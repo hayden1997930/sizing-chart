@@ -15,7 +15,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def load_data():
     """從 Google Sheets 讀取資料，解析 JSON 字串"""
     try:
-        df = conn.read(ttl=0)
+        df = conn.read(ttl="10s")
         if df.empty:
             return []
         if 'record' not in df.columns:
