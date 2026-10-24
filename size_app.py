@@ -102,13 +102,13 @@ with tab1:
                         st.info(f"❌ {t}：資料庫尚無此品類資料")
                         continue
                     
-                    # 組合部位尺寸字串
+                    # 組合部位尺寸字串                    # 組合部位尺寸字串（統一格式，避免文字過長被截斷）
                     if t == "汗衣":
-                        dim_str = f"胸寬 {r['dims'].get('chest','?')} 吋"
+                        dim_str = f"{r['dims'].get('chest','?')} 吋"
                     elif t == "藍扯衫":
                         dim_str = f"{r['dims'].get('a','?')} x {r['dims'].get('b','?')} 吋"
                     elif t == "藍扯褲":
-                        dim_str = f"腰圍 {r['dims'].get('waist','?')} x 褲長 {r['dims'].get('length','?')} 吋"
+                        dim_str = f"{r['dims'].get('waist','?')} x {r['dims'].get('length','?')} 吋"
                         
                     with st.container(border=True):
                         st.markdown(f"### {t}")
