@@ -252,6 +252,37 @@ with tab3:
             
         st.dataframe(display_table, use_container_width=True, hide_index=True)
         
+        # ==========================================
+        # 新增：數據視覺化 (散點圖)
+        # ==========================================
+        st.markdown("---")
+        st.markdown("### 📈 尺碼分佈圖 (以汗衣為例)")
+        
+        chart_data = []
+        for p in data:
+            if "汗衣" in p.get("items", {}):
+                dims = p["items"]["汗衣"]
+                size = to_size("汗衣", dims)
+                if size:
+                    chart_data.append({
+                        "身高": p["height"],
+                        "體重": p["weight"],
+                        "尺碼": size
+                    })
+        
+        if chart_data:
+            df_chart = pd.DataFrame(chart_data)
+            st.scatter_chart(
+                df_chart,
+                x="身高",
+                y="體重",
+                color="尺碼",
+                use_container_width=True
+            )
+            st.caption("💡 提示：滑鼠懸停在點上可查看詳細數值。不同顏色代表不同尺碼，方便觀察群聚效應。")
+        else:
+            st.info("尚無足夠的汗衣數據可供繪製圖表。")
+            
         st.markdown("---")
         st.markdown("### ⚙️ 管理與修改")
         
@@ -269,7 +300,6 @@ with tab3:
         else:
             st.success("✅ 已解鎖管理權限")
             
-            # --- 新增：補齊舊資料時間按鈕 ---
             st.info("💡 如果你是剛加入時間功能，可以點擊下方按鈕，將所有沒有時間的舊資料設為當前時間。")
             if st.button("⏱️ 一鍵補齊舊資料時間", use_container_width=True):
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
