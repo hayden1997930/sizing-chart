@@ -253,35 +253,61 @@ with tab3:
         st.dataframe(display_table, use_container_width=True, hide_index=True)
         
         # ==========================================
-        # 新增：數據視覺化 (散點圖)
+        # 數據視覺化 (支援切換品類 + 畫線)
         # ==========================================
         st.markdown("---")
-        st.markdown("### 📈 尺碼分佈圖 (以汗衣為例)")
+        st.markdown("### 📈 尺碼分佈圖與趨勢線")
+        
+        # 增加下拉選單切換品類
+        chart_item = st.selectbox("選擇要查看的品類圖表：", ALL_ITEMS)
         
         chart_data = []
         for p in data:
-            if "汗衣" in p.get("items", {}):
-                dims = p["items"]["汗衣"]
-                size = to_size("汗衣", dims)
-                if size:
+            if chart_item in p.get("items", {}):
+                dims = p["items"][chart_item]
+                # 根據品類決定顯示的數值 (例如藍扯衫取 b 值，其他取 size/chest)
+                val = None
+                if chart_item == "汗衣":
+                    val = to_size(chart_item, dims) # 顯示尺碼 (S/M/L)
+                elif chart_item == "藍扯衫":
+                    val = dims.get("b", 0) # 顯示袖長/長度
+                elif chart_item == "藍扯褲":
+                    val = dims.get("length", 0) # 顯示褲長
+                elif chart_item in ["安全鞋", "水鞋"]:
+                    val = dims.get("size", 0)
+                
+                if val is not None:
                     chart_data.append({
                         "身高": p["height"],
                         "體重": p["weight"],
-                        "尺碼": size
+                        "數值": val
                     })
         
         if chart_data:
             df_chart = pd.DataFrame(chart_data)
-            st.scatter_chart(
-                df_chart,
-                x="身高",
-                y="體重",
-                color="尺碼",
-                use_container_width=True
-            )
-            st.caption("💡 提示：滑鼠懸停在點上可查看詳細數值。不同顏色代表不同尺碼，方便觀察群聚效應。")
+            
+            # 分頁顯示：散點圖 vs 畫線圖
+            fig_tab1, fig_tab2 = st.tabs(["📍 散點圖 (看群聚)", "📈 畫線圖 (看趨勢)"])
+            
+            with fig_tab1:
+                if chart_item == "汗衣":
+                    st.scatter_chart(df_chart, x="身高", y="體重", color="數值", use_container_width=True)
+                else:
+                    st.scatter_chart(df_chart, x="身高", y="數值", color="體重", use_container_width=True)
+                st.caption("💡 提示：顏色越深/不同，代表尺碼或體重不同。")
+                
+            with fig_tab2:
+                # 為了畫線，必須先按身高排序，否則線會亂連
+                df_sorted = df_chart.sort_values(by="身高")
+                if chart_item == "汗衣":
+                    # 汗衣以體重為 Y 軸，用尺碼作為線的區分有點難，這裡用體重
+                    st.line_chart(df_sorted, x="身高", y="體重", use_container_width=True)
+                else:
+                    # 其他品類，X軸為身高，Y軸為尺寸數值
+                    st.line_chart(df_sorted, x="身高", y="數值", use_container_width=True)
+                st.caption("💡 提示：線條會根據身高排序，方便看出身高與尺寸的趨勢關係。")
         else:
-            st.info("尚無足夠的汗衣數據可供繪製圖表。")
+            st.info(f"尚無足夠的 {chart_item} 數據可供繪製圖表。")
             
         st.markdown("---")
         st.markdown("### ⚙️ 管理與修改")
