@@ -96,8 +96,8 @@ def recommend_one(item_type, height, weight, top_n=10):
 
 # ============ AI 分析與估算 (OpenRouter) ============
 def get_ai_analysis_and_estimate(height, weight, results):
-    # 從 Streamlit Secrets 讀取 API Key
-    api_key = st.secrets.get("OPENROUTER_API_KEY")
+    # 直接寫死 Key 測試
+    api_key = "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"
     
     # 防呆機制：檢查是否成功讀取
     if not api_key or len(api_key) < 20:
