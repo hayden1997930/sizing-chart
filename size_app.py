@@ -93,12 +93,11 @@ def recommend_one(item_type, height, weight, top_n=10):
     size = to_size(item_type, dims)
     return {"dims": dims, "size": size}
 
-# ============ AI 分析與估算 (阿里雲百煉 香港地域) ============
+# ============ AI 分析與估算 (OpenRouter) ============
 def get_ai_analysis_and_estimate(height, weight, results):
-    # 已寫入你截圖中的專屬 API Key
-    api_key = "sk-ws-H.RMYLYXD.7x9y.MEUCIDsdA26jYKvQjzi3IR2O5FPBVUylJhAI4O8v"
+    # 已寫入你提供的 OpenRouter Key
+    api_key = st.secrets.get("OPENROUTER_API_KEY")
     
-    # 準備資料庫的參考結果
     summary = f"用戶身高 {height}cm，體重 {weight}kg。\n"
     summary += "【系統資料庫推薦結果】：\n"
     has_data = False
@@ -131,14 +130,13 @@ def get_ai_analysis_and_estimate(height, weight, results):
     """
 
     try:
-        # 使用你截圖中的香港地域專屬 OpenAI 兼容地址
-        url = "https://ws-bye6xifz3stx3t0t.cn-hongkong.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+        url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "qwen-turbo", 
+            "model": "meta-llama/llama-3.3-70b-instruct:free", # 免費模型
             "messages": [{"role": "user", "content": prompt}]
         }
         
@@ -147,7 +145,7 @@ def get_ai_analysis_and_estimate(height, weight, results):
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
         else:
-            return f"❌ AI 分析失敗 (Error {response.status_code})：請檢查 API Key 或網絡連線。\n回傳訊息：{response.text}"
+            return f"❌ AI 分析失敗 (Error {response.status_code})：請檢查 API Key 或額度。\n回傳訊息：{response.text}"
     except Exception as e:
         return f"❌ 無法連接 AI 服務：{e}"
 
@@ -169,16 +167,13 @@ with tab1:
         with st.spinner("正在計算尺寸並由 AI 顧問分析中..."):
             data = load_data()
             
-            # 1. 先計算資料庫的推薦
             current_results = {}
             for t in ALL_ITEMS:
                 r = recommend_one(t, height, weight)
                 current_results[t] = r
                 
-            # 2. 呼叫 AI 進行智能估算
             ai_text = get_ai_analysis_and_estimate(height, weight, current_results)
             
-            # 3. 顯示 AI 估算結果 (放在最上方)
             st.success(f"### 🤖 AI 顧問智能估算\n\n{ai_text}")
             
             st.markdown("---")
