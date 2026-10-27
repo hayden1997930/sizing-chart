@@ -40,7 +40,8 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     try:
-        df = conn.read(ttl=0)
+        # 將快取設定為 15 秒
+        df = conn.read(ttl="15s")
         if df.empty or 'record' not in df.columns:
             return []
         records = df['record'].dropna().tolist()
