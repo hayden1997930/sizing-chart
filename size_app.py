@@ -58,7 +58,7 @@ def to_size(item_type, dims):
         return min(HAN_YI_CHART, key=lambda x: abs(x[0] - dims["chest"]))[1]
     return None
 
-# ============ 推薦演算法 (KNN) ============
+# ============ 推薦演算法 (KNN - 已標準化) ============
 def recommend_one(item_type, height, weight, top_n=10):
     data = [p for p in load_data() if item_type in p.get("items", {})]
     if not data:
@@ -68,7 +68,13 @@ def recommend_one(item_type, height, weight, top_n=10):
     scored = []
     for p in data:
         p_bmi = p["weight"] / (p["height"] / 100) ** 2
-        dist = ((p["height"] - height) / 2) ** 2 + ((p_bmi - bmi) / 2) ** 2
+        
+        # 【修正】特徵標準化：將身高差除以 10，BMI 差除以 3。
+        # 並且因為體重/胖瘦對衣服合身度影響很大，將 BMI 的權重乘 1.5 倍。
+        height_diff = (p["height"] - height) / 10
+        bmi_diff = (p_bmi - bmi) / 3
+        dist = (height_diff ** 2) + ((bmi_diff * 1.5) ** 2)
+        
         scored.append((dist, p["items"][item_type]))
         
     scored.sort(key=lambda x: x[0])
@@ -253,59 +259,49 @@ with tab3:
         st.dataframe(display_table, use_container_width=True, hide_index=True)
         
         # ==========================================
-        # 數據視覺化 (支援切換品類 + 畫線)
+        # 數據視覺化 (保留散點圖，加入尺寸過濾)
         # ==========================================
         st.markdown("---")
-        st.markdown("### 📈 尺碼分佈圖與趨勢線")
+        st.markdown("### 📈 各品類尺寸分佈圖")
         
-        # 增加下拉選單切換品類
         chart_item = st.selectbox("選擇要查看的品類圖表：", ALL_ITEMS)
         
         chart_data = []
         for p in data:
             if chart_item in p.get("items", {}):
                 dims = p["items"][chart_item]
-                # 根據品類決定顯示的數值 (例如藍扯衫取 b 值，其他取 size/chest)
-                val = None
-                if chart_item == "汗衣":
-                    val = to_size(chart_item, dims) # 顯示尺碼 (S/M/L)
-                elif chart_item == "藍扯衫":
-                    val = dims.get("b", 0) # 顯示袖長/長度
-                elif chart_item == "藍扯褲":
-                    val = dims.get("length", 0) # 顯示褲長
-                elif chart_item in ["安全鞋", "水鞋"]:
-                    val = dims.get("size", 0)
                 
-                if val is not None:
+                # 根據品類決定圖表要顯示的「標籤（顏色）」是什麼
+                if chart_item == "汗衣":
+                    label = to_size(chart_item, dims) # 顯示 S/M/L
+                elif chart_item == "藍扯衫":
+                    label = f"{dims.get('a', '')}x{dims.get('b', '')}" # 顯示 15x33
+                elif chart_item == "藍扯褲":
+                    label = f"{dims.get('waist', '')}x{dims.get('length', '')}" # 顯示 32x42
+                elif chart_item == "安全鞋":
+                    label = f"鞋碼 {dims.get('size', '')}"
+                elif chart_item == "水鞋":
+                    label = f"US {dims.get('size', '')}"
+                
+                if label:
                     chart_data.append({
                         "身高": p["height"],
                         "體重": p["weight"],
-                        "數值": val
+                        "尺寸": str(label)
                     })
         
         if chart_data:
             df_chart = pd.DataFrame(chart_data)
             
-            # 分頁顯示：散點圖 vs 畫線圖
-            fig_tab1, fig_tab2 = st.tabs(["📍 散點圖 (看群聚)", "📈 畫線圖 (看趨勢)"])
-            
-            with fig_tab1:
-                if chart_item == "汗衣":
-                    st.scatter_chart(df_chart, x="身高", y="體重", color="數值", use_container_width=True)
-                else:
-                    st.scatter_chart(df_chart, x="身高", y="數值", color="體重", use_container_width=True)
-                st.caption("💡 提示：顏色越深/不同，代表尺碼或體重不同。")
-                
-            with fig_tab2:
-                # 為了畫線，必須先按身高排序，否則線會亂連
-                df_sorted = df_chart.sort_values(by="身高")
-                if chart_item == "汗衣":
-                    # 汗衣以體重為 Y 軸，用尺碼作為線的區分有點難，這裡用體重
-                    st.line_chart(df_sorted, x="身高", y="體重", use_container_width=True)
-                else:
-                    # 其他品類，X軸為身高，Y軸為尺寸數值
-                    st.line_chart(df_sorted, x="身高", y="數值", use_container_width=True)
-                st.caption("💡 提示：線條會根據身高排序，方便看出身高與尺寸的趨勢關係。")
+            # 使用原生散點圖，以「尺寸」作為顏色區分
+            st.scatter_chart(
+                df_chart,
+                x="身高",
+                y="體重",
+                color="尺寸",
+                use_container_width=True
+            )
+            st.caption("💡 提示：滑鼠懸停在點上可查看詳細數值。不同顏色代表不同的尺寸，方便觀察群聚效應與異常值。")
         else:
             st.info(f"尚無足夠的 {chart_item} 數據可供繪製圖表。")
             
