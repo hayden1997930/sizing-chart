@@ -27,7 +27,6 @@ ADMIN_PASSWORD = "admin123"
 # ============ Google Sheets 連接 ============
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 取消 ttl="10s" 的快取，確保每次都讀取最新資料
 def load_data():
     try:
         df = conn.read(ttl=0)
@@ -44,7 +43,6 @@ def save_data(data):
         records = [json.dumps(p, ensure_ascii=False) for p in data]
         df_to_save = pd.DataFrame({'record': records})
         conn.update(worksheet="data", data=df_to_save)
-        # 清除 Streamlit 的資料快取，強制下次重新讀取
         st.cache_data.clear()
         return True
     except Exception as e:
@@ -260,68 +258,81 @@ with tab3:
                 st.session_state.admin_authenticated = False
                 st.rerun()
                 
-            st.markdown("#### ✏️ 修改現有資料")
+            st.markdown("#### ✏️ 修改或刪除現有資料")
             options = {f"ID: {p.get('id', '-')} | {p['height']}cm {p['weight']}kg": p for p in data}
-            selected_label = st.selectbox("選擇要修改的紀錄：", list(options.keys()))
+            selected_label = st.selectbox("選擇要操作的紀錄：", list(options.keys()))
             
             if selected_label:
                 selected_person = options[selected_label]
                 
-                with st.form("edit_form"):
-                    st.write("修改基本資料：")
-                    ec1, ec2 = st.columns(2)
-                    with ec1:
-                        new_h = st.number_input("身高 (cm)", value=float(selected_person["height"]), step=0.5)
-                    with ec2:
-                        new_w = st.number_input("體重 (kg)", value=float(selected_person["weight"]), step=0.5)
+                # 分成兩個分頁：修改 & 刪除
+                edit_tab, delete_tab = st.tabs(["✏️ 修改資料", "🗑️ 刪除資料"])
+                
+                with edit_tab:
+                    with st.form("edit_form"):
+                        st.write("修改基本資料：")
+                        ec1, ec2 = st.columns(2)
+                        with ec1:
+                            new_h = st.number_input("身高 (cm)", value=float(selected_person["height"]), step=0.5)
+                        with ec2:
+                            new_w = st.number_input("體重 (kg)", value=float(selected_person["weight"]), step=0.5)
+                            
+                        st.write("修改尺寸（留空或填 0 表示刪除此項目）：")
+                        old_items = selected_person.get("items", {})
                         
-                    st.write("修改尺寸（留空或填 0 表示刪除此項目）：")
-                    old_items = selected_person.get("items", {})
-                    
-                    old_chest = old_items.get("汗衣", {}).get("chest", 0.0)
-                    new_chest = st.number_input("汗衣 胸寬", value=float(old_chest), step=2.0)
-                    
-                    old_shirt = old_items.get("藍扯衫", {})
-                    new_shirt = st.text_input("藍扯衫 a x b", value=f"{old_shirt.get('a', '')}x{old_shirt.get('b', '')}" if old_shirt else "")
-                    
-                    old_pants = old_items.get("藍扯褲", {})
-                    new_pants = st.text_input("藍扯褲 腰圍x褲長", value=f"{old_pants.get('waist', '')}x{old_pants.get('length', '')}" if old_pants else "")
-                    
-                    old_safety = old_items.get("安全鞋", {}).get("size", 0.0)
-                    new_safety = st.number_input("安全鞋 尺寸", value=float(old_safety), step=0.5)
-                    
-                    old_boots = old_items.get("水鞋", {}).get("size", 0.0)
-                    new_boots = st.number_input("水鞋 US尺寸", value=float(old_boots), step=0.5)
-                    
-                    update_btn = st.form_submit_button("💾 儲存修改", type="primary")
-                    
-                    if update_btn:
-                        new_items = {}
-                        if new_chest > 0: new_items["汗衣"] = {"chest": float(new_chest)}
-                        if new_shirt.strip():
-                            try:
-                                a, b = new_shirt.lower().replace(" ", "").split("x")
-                                new_items["藍扯衫"] = {"a": float(a), "b": float(b)}
-                            except:
-                                st.error("藍扯衫格式錯誤")
-                        if new_pants.strip():
-                            try:
-                                wa, le = new_pants.lower().replace(" ", "").split("x")
-                                new_items["藍扯褲"] = {"waist": float(wa), "length": float(le)}
-                            except:
-                                st.error("藍扯褲格式錯誤")
-                        if new_safety > 0: new_items["安全鞋"] = {"size": float(new_safety)}
-                        if new_boots > 0: new_items["水鞋"] = {"size": float(new_boots)}
+                        old_chest = old_items.get("汗衣", {}).get("chest", 0.0)
+                        new_chest = st.number_input("汗衣 胸寬", value=float(old_chest), step=2.0)
                         
-                        for i, p in enumerate(data):
-                            if p.get("id") == selected_person.get("id"):
-                                data[i]["height"] = new_h
-                                data[i]["weight"] = new_w
-                                data[i]["items"] = new_items
-                                break
-                                
-                        if save_data(data):
-                            st.session_state.dialog_type = "修改"
+                        old_shirt = old_items.get("藍扯衫", {})
+                        new_shirt = st.text_input("藍扯衫 a x b", value=f"{old_shirt.get('a', '')}x{old_shirt.get('b', '')}" if old_shirt else "")
+                        
+                        old_pants = old_items.get("藍扯褲", {})
+                        new_pants = st.text_input("藍扯褲 腰圍x褲長", value=f"{old_pants.get('waist', '')}x{old_pants.get('length', '')}" if old_pants else "")
+                        
+                        old_safety = old_items.get("安全鞋", {}).get("size", 0.0)
+                        new_safety = st.number_input("安全鞋 尺寸", value=float(old_safety), step=0.5)
+                        
+                        old_boots = old_items.get("水鞋", {}).get("size", 0.0)
+                        new_boots = st.number_input("水鞋 US尺寸", value=float(old_boots), step=0.5)
+                        
+                        update_btn = st.form_submit_button("💾 儲存修改", type="primary")
+                        
+                        if update_btn:
+                            new_items = {}
+                            if new_chest > 0: new_items["汗衣"] = {"chest": float(new_chest)}
+                            if new_shirt.strip():
+                                try:
+                                    a, b = new_shirt.lower().replace(" ", "").split("x")
+                                    new_items["藍扯衫"] = {"a": float(a), "b": float(b)}
+                                except:
+                                    st.error("藍扯衫格式錯誤")
+                            if new_pants.strip():
+                                try:
+                                    wa, le = new_pants.lower().replace(" ", "").split("x")
+                                    new_items["藍扯褲"] = {"waist": float(wa), "length": float(le)}
+                                except:
+                                    st.error("藍扯褲格式錯誤")
+                            if new_safety > 0: new_items["安全鞋"] = {"size": float(new_safety)}
+                            if new_boots > 0: new_items["水鞋"] = {"size": float(new_boots)}
+                            
+                            for i, p in enumerate(data):
+                                if p.get("id") == selected_person.get("id"):
+                                    data[i]["height"] = new_h
+                                    data[i]["weight"] = new_w
+                                    data[i]["items"] = new_items
+                                    break
+                                    
+                            if save_data(data):
+                                st.session_state.dialog_type = "修改"
+                                st.rerun()
+
+                with delete_tab:
+                    st.warning(f"⚠️ 你確定要永久刪除這筆資料嗎？（ID: {selected_person.get('id')} | {selected_person['height']}cm {selected_person['weight']}kg）")
+                    if st.button("🗑️ 確認刪除此筆資料", type="primary", use_container_width=True):
+                        # 過濾掉要刪除的 ID
+                        new_data = [p for p in data if p.get("id") != selected_person.get("id")]
+                        if save_data(new_data):
+                            st.session_state.dialog_type = "刪除"
                             st.rerun()
 
         st.markdown("---")
