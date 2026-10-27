@@ -4,6 +4,7 @@ from collections import defaultdict
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import time
+from datetime import datetime
 
 # ============ 頁面設定與隱藏工具列 ============
 st.set_page_config(page_title="衣服尺寸推薦", page_icon="👕", layout="centered", menu_items={})
@@ -201,7 +202,15 @@ with tab2:
             if items:
                 data = load_data()
                 new_id = int(time.time() * 1000)
-                data.append({"id": new_id, "name": "匿名", "height": h, "weight": w, "items": items})
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+                data.append({
+                    "id": new_id, 
+                    "name": "匿名", 
+                    "height": h, 
+                    "weight": w, 
+                    "items": items,
+                    "created_at": current_time
+                })
                 if save_data(data):
                     st.session_state.dialog_type = "新增"
                     st.rerun()
@@ -218,7 +227,12 @@ with tab3:
     else:
         display_table = []
         for p in data:
-            row = {"ID": p.get("id", "-"), "身高(cm)": p["height"], "體重(kg)": p["weight"]}
+            row = {
+                "ID": p.get("id", "-"), 
+                "新增時間": p.get("created_at", "-"),
+                "身高(cm)": p["height"], 
+                "體重(kg)": p["weight"]
+            }
             for t in ALL_ITEMS:
                 if t in p.get("items", {}):
                     d = p["items"][t]
@@ -245,7 +259,7 @@ with tab3:
             st.session_state.admin_authenticated = False
             
         if not st.session_state.admin_authenticated:
-            pwd = st.text_input("請輸入管理員密碼以解鎖修改功能：", type="password")
+            pwd = st.text_input("請輸入管理員密碼以解鎖管理功能：", type="password")
             if st.button("🔓 解鎖"):
                 if pwd == ADMIN_PASSWORD:
                     st.session_state.admin_authenticated = True
@@ -254,18 +268,36 @@ with tab3:
                     st.error("❌ 密碼錯誤！")
         else:
             st.success("✅ 已解鎖管理權限")
+            
+            # --- 新增：補齊舊資料時間按鈕 ---
+            st.info("💡 如果你是剛加入時間功能，可以點擊下方按鈕，將所有沒有時間的舊資料設為當前時間。")
+            if st.button("⏱️ 一鍵補齊舊資料時間", use_container_width=True):
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+                updated_count = 0
+                for p in data:
+                    if "created_at" not in p or p["created_at"] == "-":
+                        p["created_at"] = current_time
+                        updated_count += 1
+                if updated_count > 0:
+                    if save_data(data):
+                        st.session_state.dialog_type = f"補齊時間（共 {updated_count} 筆）"
+                        st.rerun()
+                else:
+                    st.warning("沒有需要補齊時間的舊資料。")
+                    
+            st.markdown("---")
+            
             if st.button("🔒 鎖定權限"):
                 st.session_state.admin_authenticated = False
                 st.rerun()
                 
             st.markdown("#### ✏️ 修改或刪除現有資料")
-            options = {f"ID: {p.get('id', '-')} | {p['height']}cm {p['weight']}kg": p for p in data}
+            options = {f"ID: {p.get('id', '-')} | {p.get('created_at', '-')} | {p['height']}cm {p['weight']}kg": p for p in data}
             selected_label = st.selectbox("選擇要操作的紀錄：", list(options.keys()))
             
             if selected_label:
                 selected_person = options[selected_label]
                 
-                # 分成兩個分頁：修改 & 刪除
                 edit_tab, delete_tab = st.tabs(["✏️ 修改資料", "🗑️ 刪除資料"])
                 
                 with edit_tab:
@@ -329,7 +361,6 @@ with tab3:
                 with delete_tab:
                     st.warning(f"⚠️ 你確定要永久刪除這筆資料嗎？（ID: {selected_person.get('id')} | {selected_person['height']}cm {selected_person['weight']}kg）")
                     if st.button("🗑️ 確認刪除此筆資料", type="primary", use_container_width=True):
-                        # 過濾掉要刪除的 ID
                         new_data = [p for p in data if p.get("id") != selected_person.get("id")]
                         if save_data(new_data):
                             st.session_state.dialog_type = "刪除"
