@@ -3,6 +3,7 @@ import json
 from collections import defaultdict
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+import time
 
 # ============ 頁面設定與隱藏工具列 ============
 st.set_page_config(page_title="衣服尺寸推薦", page_icon="👕", layout="centered", menu_items={})
@@ -65,7 +66,6 @@ def recommend_one(item_type, height, weight, top_n=10):
     scored = []
     for p in data:
         p_bmi = p["weight"] / (p["height"] / 100) ** 2
-        # 身高差異懲罰加大
         dist = ((p["height"] - height) / 2) ** 2 + ((p_bmi - bmi) / 2) ** 2
         scored.append((dist, p["items"][item_type]))
         
@@ -81,7 +81,6 @@ def recommend_one(item_type, height, weight, top_n=10):
             
     raw_dims = {k: v / total_w for k, v in dims_sum.items()}
     
-    # 處理小數點：汗衣鎖死雙數，其他四捨五入到 0.5
     dims = {}
     if item_type == "汗衣":
         raw_chest = raw_dims.get("chest", 42.0)
@@ -97,7 +96,7 @@ def recommend_one(item_type, height, weight, top_n=10):
 # ============ 介面設計 ============
 st.title("👕 衣服尺寸推薦系統")
 
-tab1, tab2, tab3 = st.tabs(["🔍 查詢建議", "➕ 新增人員", "📊 資料分佈"])
+tab1, tab2, tab3 = st.tabs(["🔍 查詢建議", "➕ 新增人員", "📊 資料管理"])
 
 # ---------- Tab 1：查詢 ----------
 with tab1:
@@ -111,7 +110,6 @@ with tab1:
     if st.button("🎯 推薦尺寸", type="primary", use_container_width=True):
         with st.spinner("正在計算最適合您的尺寸..."):
             data = load_data()
-            
             if not data:
                 st.warning("⚠️ 資料庫還是空的，請先到「➕ 新增人員」錄入資料。")
             else:
@@ -200,69 +198,155 @@ with tab2:
                     st.error("水鞋格式錯誤，請輸入數字（例如 9 或 8.5）")
 
             if items:
-                final_name = "匿名"
                 data = load_data()
-                data.append({"name": final_name, "height": h, "weight": w, "items": items})
+                # 生成唯一 ID
+                new_id = int(time.time() * 1000)
+                data.append({"id": new_id, "name": "匿名", "height": h, "weight": w, "items": items})
                 if save_data(data):
                     st.session_state.show_success_dialog = True
                     st.rerun()
             else:
                 st.warning("請至少填一項尺寸")
 
-# ---------- Tab 3：分佈 ----------
+# ---------- Tab 3：資料管理 (包含分佈與修改) ----------
 with tab3:
-    st.subheader("資料分佈")
+    st.subheader("📊 資料庫一覽與修改")
+    
     data = load_data()
     if not data:
         st.info("尚無資料。")
     else:
-        st.write(f"共 **{len(data)}** 筆記錄")
-        for t in ALL_ITEMS:
-            rows = [p for p in data if t in p.get("items", {})]
-            if not rows:
-                continue
-            st.markdown(f"#### {t}（{len(rows)} 筆）")
-            table = []
-            for p in rows:
-                d = p["items"][t]
-                
-                if t == "汗衣":
-                    parts = f"胸寬 {d.get('chest', '')}"
-                elif t == "藍扯衫":
-                    parts = f"{d.get('a', '')} x {d.get('b', '')}"
-                elif t == "藍扯褲":
-                    parts = f"{d.get('waist', '')} x {d.get('length', '')}"
-                elif t == "安全鞋":
-                    parts = f"鞋碼 {d.get('size', '')}"
-                elif t == "水鞋":
-                    parts = f"US {d.get('size', '')}"
+        # 建立一個易讀的表格用於顯示
+        display_table = []
+        for p in data:
+            row = {"ID": p.get("id", "-"), "身高(cm)": p["height"], "體重(kg)": p["weight"]}
+            for t in ALL_ITEMS:
+                if t in p.get("items", {}):
+                    d = p["items"][t]
+                    if t == "汗衣":
+                        row[t] = f"{int(d.get('chest', ''))} ({to_size(t, d)})"
+                    elif t == "藍扯衫":
+                        row[t] = f"{d.get('a', '')} x {d.get('b', '')}"
+                    elif t == "藍扯褲":
+                        row[t] = f"{d.get('waist', '')} x {d.get('length', '')}"
+                    elif t == "安全鞋":
+                        row[t] = f"{d.get('size', '')}"
+                    elif t == "水鞋":
+                        row[t] = f"US {d.get('size', '')}"
                 else:
-                    parts = "  ".join(f"{k}={v}" for k, v in d.items())
+                    row[t] = "—"
+            display_table.append(row)
+            
+        st.dataframe(display_table, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        st.markdown("### ⚙️ 管理與修改")
+        
+        # 密碼驗證區塊
+        if "admin_authenticated" not in st.session_state:
+            st.session_state.admin_authenticated = False
+            
+        if not st.session_state.admin_authenticated:
+            pwd = st.text_input("請輸入管理員密碼以解鎖修改功能：", type="password")
+            if st.button("🔓 解鎖"):
+                if pwd == ADMIN_PASSWORD:
+                    st.session_state.admin_authenticated = True
+                    st.rerun()
+                else:
+                    st.error("❌ 密碼錯誤！")
+        else:
+            st.success("✅ 已解鎖管理權限")
+            if st.button("🔒 鎖定權限"):
+                st.session_state.admin_authenticated = False
+                st.rerun()
                 
-                size_display = to_size(t, d) if t == "汗衣" else "—"
-                table.append({
-                    "姓名": p["name"], 
-                    "身高": p["height"], 
-                    "體重": p["weight"], 
-                    "尺寸": parts, 
-                    "尺碼": size_display
-                })
-            st.dataframe(table, use_container_width=True, hide_index=True)
+            # 選擇要修改的資料
+            st.markdown("#### ✏️ 修改現有資料")
+            options = {f"ID: {p.get('id', '-')} | {p['height']}cm {p['weight']}kg": p for p in data}
+            selected_label = st.selectbox("選擇要修改的紀錄：", list(options.keys()))
+            
+            if selected_label:
+                selected_person = options[selected_label]
+                
+                with st.form("edit_form"):
+                    st.write("修改基本資料：")
+                    ec1, ec2 = st.columns(2)
+                    with ec1:
+                        new_h = st.number_input("身高 (cm)", value=float(selected_person["height"]), step=0.5)
+                    with ec2:
+                        new_w = st.number_input("體重 (kg)", value=float(selected_person["weight"]), step=0.5)
+                        
+                    st.write("修改尺寸（留空或填 0 表示刪除此項目）：")
+                    
+                    # 讀取舊資料，若無則給預設值
+                    old_items = selected_person.get("items", {})
+                    
+                    # 汗衣
+                    old_chest = old_items.get("汗衣", {}).get("chest", 0.0)
+                    new_chest = st.number_input("汗衣 胸寬", value=float(old_chest), step=2.0)
+                    
+                    # 藍扯衫
+                    old_shirt = old_items.get("藍扯衫", {})
+                    new_shirt = st.text_input("藍扯衫 a x b", value=f"{old_shirt.get('a', '')}x{old_shirt.get('b', '')}" if old_shirt else "")
+                    
+                    # 藍扯褲
+                    old_pants = old_items.get("藍扯褲", {})
+                    new_pants = st.text_input("藍扯褲 腰圍x褲長", value=f"{old_pants.get('waist', '')}x{old_pants.get('length', '')}" if old_pants else "")
+                    
+                    # 安全鞋
+                    old_safety = old_items.get("安全鞋", {}).get("size", 0.0)
+                    new_safety = st.number_input("安全鞋 尺寸", value=float(old_safety), step=0.5)
+                    
+                    # 水鞋
+                    old_boots = old_items.get("水鞋", {}).get("size", 0.0)
+                    new_boots = st.number_input("水鞋 US尺寸", value=float(old_boots), step=0.5)
+                    
+                    update_btn = st.form_submit_button("💾 儲存修改", type="primary")
+                    
+                    if update_btn:
+                        new_items = {}
+                        if new_chest > 0: new_items["汗衣"] = {"chest": float(new_chest)}
+                        if new_shirt.strip():
+                            try:
+                                a, b = new_shirt.lower().replace(" ", "").split("x")
+                                new_items["藍扯衫"] = {"a": float(a), "b": float(b)}
+                            except:
+                                st.error("藍扯衫格式錯誤")
+                        if new_pants.strip():
+                            try:
+                                wa, le = new_pants.lower().replace(" ", "").split("x")
+                                new_items["藍扯褲"] = {"waist": float(wa), "length": float(le)}
+                            except:
+                                st.error("藍扯褲格式錯誤")
+                        if new_safety > 0: new_items["安全鞋"] = {"size": float(new_safety)}
+                        if new_boots > 0: new_items["水鞋"] = {"size": float(new_boots)}
+                        
+                        # 更新資料庫
+                        for i, p in enumerate(data):
+                            if p.get("id") == selected_person.get("id"):
+                                data[i]["height"] = new_h
+                                data[i]["weight"] = new_w
+                                data[i]["items"] = new_items
+                                break
+                                
+                        if save_data(data):
+                            st.success("✅ 修改成功！")
+                            st.rerun()
 
         st.markdown("---")
         
+        # 匯出與清空功能 (限制只有解鎖後才能清空)
         c1, c2 = st.columns(2)
         with c1:
             st.download_button("⬇️ 匯出 JSON", json.dumps(data, ensure_ascii=False, indent=2),
                                file_name="clothing_data.json", mime="application/json", use_container_width=True)
         with c2:
-            with st.popover("🗑️ 清空所有資料", use_container_width=True):
-                st.write("⚠️ 確定要刪除所有資料嗎？")
-                pwd = st.text_input("請輸入管理員密碼", type="password", key="del_pwd")
-                if st.button("確認刪除", type="primary", use_container_width=True):
-                    if pwd == ADMIN_PASSWORD:
+            if st.session_state.admin_authenticated:
+                with st.popover("🗑️ 清空所有資料", use_container_width=True):
+                    st.write("⚠️ 確定要刪除所有資料嗎？")
+                    if st.button("確認清空", type="primary", use_container_width=True):
                         save_data([])
                         st.success("✅ 所有資料已清空！")
                         st.rerun()
-                    else:
-                        st.error("❌ 密碼錯誤，無法刪除！")
+            else:
+                st.button("🗑️ 清空所有資料 (需解鎖)", disabled=True, use_container_width=True)
