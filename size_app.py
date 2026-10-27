@@ -140,23 +140,23 @@ with tab1:
                         else:
                             st.metric("建議尺寸", dim_str)
 
+# ---------- 定義共用彈窗 ----------
+if "dialog_type" not in st.session_state:
+    st.session_state.dialog_type = None
+
+@st.dialog("✅ 操作成功")
+def success_dialog(action_type):
+    st.write(f"資料已成功{action_type}！")
+    if st.button("確定", use_container_width=True):
+        st.session_state.dialog_type = None
+        st.rerun()
+
+if st.session_state.dialog_type:
+    success_dialog(st.session_state.dialog_type)
+
 # ---------- Tab 2：新增 ----------
 with tab2:
     st.subheader("新增人員資料")
-    
-    if "show_success_dialog" not in st.session_state:
-        st.session_state.show_success_dialog = False
-
-    @st.dialog("✅ 儲存成功")
-    def success_dialog():
-        st.write("資料已成功寫入 Google Sheets 資料庫！")
-        if st.button("確定", use_container_width=True):
-            st.session_state.show_success_dialog = False
-            st.rerun()
-
-    if st.session_state.show_success_dialog:
-        success_dialog()
-
     with st.form("add_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
@@ -199,11 +199,10 @@ with tab2:
 
             if items:
                 data = load_data()
-                # 生成唯一 ID
                 new_id = int(time.time() * 1000)
                 data.append({"id": new_id, "name": "匿名", "height": h, "weight": w, "items": items})
                 if save_data(data):
-                    st.session_state.show_success_dialog = True
+                    st.session_state.dialog_type = "新增"
                     st.rerun()
             else:
                 st.warning("請至少填一項尺寸")
@@ -216,7 +215,7 @@ with tab3:
     if not data:
         st.info("尚無資料。")
     else:
-        # 建立一個易讀的表格用於顯示
+        # 建立表格
         display_table = []
         for p in data:
             row = {"ID": p.get("id", "-"), "身高(cm)": p["height"], "體重(kg)": p["weight"]}
@@ -242,7 +241,6 @@ with tab3:
         st.markdown("---")
         st.markdown("### ⚙️ 管理與修改")
         
-        # 密碼驗證區塊
         if "admin_authenticated" not in st.session_state:
             st.session_state.admin_authenticated = False
             
@@ -260,7 +258,6 @@ with tab3:
                 st.session_state.admin_authenticated = False
                 st.rerun()
                 
-            # 選擇要修改的資料
             st.markdown("#### ✏️ 修改現有資料")
             options = {f"ID: {p.get('id', '-')} | {p['height']}cm {p['weight']}kg": p for p in data}
             selected_label = st.selectbox("選擇要修改的紀錄：", list(options.keys()))
@@ -277,27 +274,20 @@ with tab3:
                         new_w = st.number_input("體重 (kg)", value=float(selected_person["weight"]), step=0.5)
                         
                     st.write("修改尺寸（留空或填 0 表示刪除此項目）：")
-                    
-                    # 讀取舊資料，若無則給預設值
                     old_items = selected_person.get("items", {})
                     
-                    # 汗衣
                     old_chest = old_items.get("汗衣", {}).get("chest", 0.0)
                     new_chest = st.number_input("汗衣 胸寬", value=float(old_chest), step=2.0)
                     
-                    # 藍扯衫
                     old_shirt = old_items.get("藍扯衫", {})
                     new_shirt = st.text_input("藍扯衫 a x b", value=f"{old_shirt.get('a', '')}x{old_shirt.get('b', '')}" if old_shirt else "")
                     
-                    # 藍扯褲
                     old_pants = old_items.get("藍扯褲", {})
                     new_pants = st.text_input("藍扯褲 腰圍x褲長", value=f"{old_pants.get('waist', '')}x{old_pants.get('length', '')}" if old_pants else "")
                     
-                    # 安全鞋
                     old_safety = old_items.get("安全鞋", {}).get("size", 0.0)
                     new_safety = st.number_input("安全鞋 尺寸", value=float(old_safety), step=0.5)
                     
-                    # 水鞋
                     old_boots = old_items.get("水鞋", {}).get("size", 0.0)
                     new_boots = st.number_input("水鞋 US尺寸", value=float(old_boots), step=0.5)
                     
@@ -321,7 +311,6 @@ with tab3:
                         if new_safety > 0: new_items["安全鞋"] = {"size": float(new_safety)}
                         if new_boots > 0: new_items["水鞋"] = {"size": float(new_boots)}
                         
-                        # 更新資料庫
                         for i, p in enumerate(data):
                             if p.get("id") == selected_person.get("id"):
                                 data[i]["height"] = new_h
@@ -330,12 +319,11 @@ with tab3:
                                 break
                                 
                         if save_data(data):
-                            st.success("✅ 修改成功！")
+                            st.session_state.dialog_type = "修改"
                             st.rerun()
 
         st.markdown("---")
         
-        # 匯出與清空功能 (限制只有解鎖後才能清空)
         c1, c2 = st.columns(2)
         with c1:
             st.download_button("⬇️ 匯出 JSON", json.dumps(data, ensure_ascii=False, indent=2),
