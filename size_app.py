@@ -3,11 +3,11 @@ import json
 from collections import defaultdict
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+import requests
 
 # ============ 頁面設定與隱藏工具列 ============
 st.set_page_config(page_title="衣服尺寸推薦", page_icon="👕", layout="centered", menu_items={})
 
-# 隱藏右上角的 Share, Edit, GitHub 等所有工具列及選單
 hide_streamlit_style = """
             <style>
             #MainMenu {visibility: hidden;}
@@ -22,8 +22,6 @@ st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # ============ 尺碼表 ============
 HAN_YI_CHART = [(38, "S"), (40, "M"), (42, "L"), (44, "XL"), (46, "XXL")]
 ALL_ITEMS = ["汗衣", "藍扯衫", "藍扯褲", "安全鞋", "水鞋"]
-
-# ============ 管理員密碼 ============
 ADMIN_PASSWORD = "admin123"
 
 # ============ Google Sheets 連接 ============
@@ -32,9 +30,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def load_data():
     try:
         df = conn.read(ttl="10s")
-        if df.empty:
-            return []
-        if 'record' not in df.columns:
+        if df.empty or 'record' not in df.columns:
             return []
         records = df['record'].dropna().tolist()
         return [json.loads(r) for r in records if r]
@@ -83,10 +79,8 @@ def recommend_one(item_type, height, weight, top_n=10):
         for k, v in item.items():
             dims_sum[k] += v * w
             
-    # 計算平均尺寸
     raw_dims = {k: v / total_w for k, v in dims_sum.items()}
     
-    # 處理小數點：汗衣鎖死雙數，其他四捨五入到 0.5
     dims = {}
     if item_type == "汗衣":
         raw_chest = raw_dims.get("chest", 42.0)
@@ -98,6 +92,52 @@ def recommend_one(item_type, height, weight, top_n=10):
             
     size = to_size(item_type, dims)
     return {"dims": dims, "size": size}
+
+# ============ AI 分析函數 (阿里雲百煉) ============
+def get_ai_analysis(height, weight, results):
+    # 已經將你的 API Key 直接寫在這裡
+    api_key = "sk-ws-H.RMYLYIM.VCSC.MEQCIE_FN5tRLO5ulnVjUZW1QZaPykz9LeU9IZOX9yHVskKZAiAeaIUMHhVoB1b3rzj2zoRMqFo-uMyVZ0USkTy2ir3e5g"
+    
+    summary = f"用戶身高 {height}cm，體重 {weight}kg。系統推薦結果如下：\n"
+    for t, r in results.items():
+        if not r: continue
+        if t == "汗衣":
+            summary += f"- {t}：尺寸 {int(r['dims'].get('chest',0))} (尺碼 {r['size']})\n"
+        elif t == "藍扯衫":
+            summary += f"- {t}：{r['dims'].get('a')} x {r['dims'].get('b')}\n"
+        elif t == "藍扯褲":
+            summary += f"- {t}：{r['dims'].get('waist')} x {r['dims'].get('length')}\n"
+        elif t == "安全鞋":
+            summary += f"- {t}：{r['dims'].get('size')}\n"
+        elif t == "水鞋":
+            summary += f"- {t}：US {r['dims'].get('size')}\n"
+
+    prompt = f"""
+    你是一個專業的服裝與安全裝備顧問。
+    {summary}
+    請用兩至三句說話（廣東話），以專業但親切的語氣總結一下這個推薦，並提醒用戶在試穿時需要注意的地方（例如肩膀、褲長等）。
+    不要重複列出所有尺寸，直接給出總結建議。
+    """
+
+    try:
+        url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "qwen-turbo",
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"]
+        else:
+            return f"❌ AI 請求失敗 (Error {response.status_code})：請檢查 API Key 是否正確或餘額是否充足。"
+    except Exception as e:
+        return f"❌ 無法連接 AI 服務：{e}"
 
 # ============ 介面設計 ============
 st.title("👕 衣服尺寸推薦系統")
@@ -120,8 +160,10 @@ with tab1:
                 st.warning("⚠️ 資料庫還是空的，請先到「➕ 新增人員」錄入資料。")
             else:
                 st.markdown("---")
+                current_results = {}
                 for t in ALL_ITEMS:
                     r = recommend_one(t, height, weight)
+                    current_results[t] = r
                     if not r:
                         st.info(f"❌ {t}：資料庫尚無此品類資料")
                         continue
@@ -146,10 +188,33 @@ with tab1:
                         else:
                             st.metric("建議尺寸", dim_str)
 
+                st.markdown("---")
+                if st.button("🤖 讓 AI 顧問分析", use_container_width=True):
+                    with st.spinner("AI 顧問正在為您分析..."):
+                        ai_text = get_ai_analysis(height, weight, current_results)
+                        st.info(ai_text)
+
 # ---------- Tab 2：新增 ----------
 with tab2:
     st.subheader("新增人員資料")
-    with st.form("add_form"):
+    
+    # 使用 Session State 來控制彈窗
+    if "show_success_dialog" not in st.session_state:
+        st.session_state.show_success_dialog = False
+
+    # 定義彈窗
+    @st.dialog("✅ 儲存成功")
+    def success_dialog():
+        st.write("資料已成功寫入 Google Sheets 資料庫！")
+        if st.button("確定", use_container_width=True):
+            st.session_state.show_success_dialog = False
+            st.rerun()
+
+    # 如果狀態為 True，顯示彈窗
+    if st.session_state.show_success_dialog:
+        success_dialog()
+
+    with st.form("add_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
             h = st.number_input("身高 (cm)", 100.0, 250.0, 172.0, 0.5, key="a_h")
@@ -194,7 +259,8 @@ with tab2:
                 data = load_data()
                 data.append({"name": final_name, "height": h, "weight": w, "items": items})
                 if save_data(data):
-                    st.success(f"✅ 已成功新增資料")
+                    # 觸發彈窗
+                    st.session_state.show_success_dialog = True
                     st.rerun()
             else:
                 st.warning("請至少填一項尺寸")
