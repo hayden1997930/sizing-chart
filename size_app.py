@@ -93,14 +93,17 @@ def recommend_one(item_type, height, weight, top_n=10):
     size = to_size(item_type, dims)
     return {"dims": dims, "size": size}
 
-# ============ AI 分析函數 (阿里雲百煉) ============
-def get_ai_analysis(height, weight, results):
-    # 已經將你的 API Key 直接寫在這裡
+# ============ AI 分析與估算 (阿里雲百煉) ============
+def get_ai_analysis_and_estimate(height, weight, results):
     api_key = "sk-ws-H.RMYLYIM.VCSC.MEQCIE_FN5tRLO5ulnVjUZW1QZaPykz9LeU9IZOX9yHVskKZAiAeaIUMHhVoB1b3rzj2zoRMqFo-uMyVZ0USkTy2ir3e5g"
     
-    summary = f"用戶身高 {height}cm，體重 {weight}kg。系統推薦結果如下：\n"
+    # 準備資料庫的參考結果
+    summary = f"用戶身高 {height}cm，體重 {weight}kg。\n"
+    summary += "【系統資料庫推薦結果】：\n"
+    has_data = False
     for t, r in results.items():
         if not r: continue
+        has_data = True
         if t == "汗衣":
             summary += f"- {t}：尺寸 {int(r['dims'].get('chest',0))} (尺碼 {r['size']})\n"
         elif t == "藍扯衫":
@@ -111,12 +114,19 @@ def get_ai_analysis(height, weight, results):
             summary += f"- {t}：{r['dims'].get('size')}\n"
         elif t == "水鞋":
             summary += f"- {t}：US {r['dims'].get('size')}\n"
+    
+    if not has_data:
+        summary += "（目前資料庫沒有任何數據）\n"
 
     prompt = f"""
     你是一個專業的服裝與安全裝備顧問。
     {summary}
-    請用兩至三句說話（廣東話），以專業但親切的語氣總結一下這個推薦，並提醒用戶在試穿時需要注意的地方（例如肩膀、褲長等）。
-    不要重複列出所有尺寸，直接給出總結建議。
+    
+    請執行以下兩個任務：
+    1. 【參考估算】：請根據你對一般亞洲人體型的常識，直接為這個身高和體重的人，估算一套標準的尺寸（包括：汗衣胸寬吋數與尺碼、藍扯衫 a x b、藍扯褲腰圍 x 褲長、安全鞋碼、水鞋 US碼）。如果資料庫的數字與你的估算相差太遠，請以你的估算為準。
+    2. 【試穿建議】：用一兩句廣東話總結，提醒用戶試穿時要注意的地方。
+
+    請用清晰的點列式回答，語氣要專業且親切。不要說「根據資料庫」，直接給出你的專業判斷。
     """
 
     try:
@@ -130,12 +140,12 @@ def get_ai_analysis(height, weight, results):
             "messages": [{"role": "user", "content": prompt}]
         }
         
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response = requests.post(url, headers=headers, json=payload, timeout=20)
         
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
         else:
-            return f"❌ AI 請求失敗 (Error {response.status_code})：請檢查 API Key 是否正確或餘額是否充足。"
+            return f"❌ AI 分析失敗 (Error {response.status_code})：請檢查 API Key 或網絡連線。"
     except Exception as e:
         return f"❌ 無法連接 AI 服務：{e}"
 
@@ -153,17 +163,30 @@ with tab1:
     with col2:
         weight = st.number_input("體重 (kg)", 20.0, 200.0, 70.0, 0.5, key="q_w")
 
-    if st.button("🎯 推薦尺寸", type="primary", use_container_width=True):
-        with st.spinner("計算中..."):
+    if st.button("🎯 推薦尺寸與 AI 分析", type="primary", use_container_width=True):
+        with st.spinner("正在計算尺寸並由 AI 顧問分析中..."):
             data = load_data()
+            
+            # 1. 先計算資料庫的推薦
+            current_results = {}
+            for t in ALL_ITEMS:
+                r = recommend_one(t, height, weight)
+                current_results[t] = r
+                
+            # 2. 呼叫 AI 進行智能估算
+            ai_text = get_ai_analysis_and_estimate(height, weight, current_results)
+            
+            # 3. 顯示 AI 估算結果 (放在最上方)
+            st.success(f"### 🤖 AI 顧問智能估算\n\n{ai_text}")
+            
+            st.markdown("---")
+            st.markdown("### 📊 系統資料庫推薦結果")
+            
             if not data:
-                st.warning("⚠️ 資料庫還是空的，請先到「➕ 新增人員」錄入資料。")
+                st.warning("⚠️ 資料庫還是空的，以上為 AI 根據常識的估算。")
             else:
-                st.markdown("---")
-                current_results = {}
                 for t in ALL_ITEMS:
-                    r = recommend_one(t, height, weight)
-                    current_results[t] = r
+                    r = current_results[t]
                     if not r:
                         st.info(f"❌ {t}：資料庫尚無此品類資料")
                         continue
@@ -180,7 +203,7 @@ with tab1:
                         dim_str = f"US {r['dims'].get('size','?')}"
                         
                     with st.container(border=True):
-                        st.markdown(f"### {t}")
+                        st.markdown(f"#### {t}")
                         if t == "汗衣":
                             c1, c2 = st.columns(2)
                             c1.metric("建議尺寸", dim_str)
@@ -188,21 +211,13 @@ with tab1:
                         else:
                             st.metric("建議尺寸", dim_str)
 
-                st.markdown("---")
-                if st.button("🤖 讓 AI 顧問分析", use_container_width=True):
-                    with st.spinner("AI 顧問正在為您分析..."):
-                        ai_text = get_ai_analysis(height, weight, current_results)
-                        st.info(ai_text)
-
 # ---------- Tab 2：新增 ----------
 with tab2:
     st.subheader("新增人員資料")
     
-    # 使用 Session State 來控制彈窗
     if "show_success_dialog" not in st.session_state:
         st.session_state.show_success_dialog = False
 
-    # 定義彈窗
     @st.dialog("✅ 儲存成功")
     def success_dialog():
         st.write("資料已成功寫入 Google Sheets 資料庫！")
@@ -210,7 +225,6 @@ with tab2:
             st.session_state.show_success_dialog = False
             st.rerun()
 
-    # 如果狀態為 True，顯示彈窗
     if st.session_state.show_success_dialog:
         success_dialog()
 
@@ -259,7 +273,6 @@ with tab2:
                 data = load_data()
                 data.append({"name": final_name, "height": h, "weight": w, "items": items})
                 if save_data(data):
-                    # 觸發彈窗
                     st.session_state.show_success_dialog = True
                     st.rerun()
             else:
