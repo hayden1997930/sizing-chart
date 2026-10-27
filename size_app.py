@@ -4,6 +4,21 @@ from collections import defaultdict
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
+# ============ 頁面設定與隱藏工具列 ============
+st.set_page_config(page_title="衣服尺寸推薦", page_icon="👕", layout="centered", menu_items={})
+
+# 隱藏右上角的 Share, Edit, GitHub 等所有工具列及選單
+hide_streamlit_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            header {visibility: hidden;}
+            footer {visibility: hidden;}
+            .stDeployButton {display:none;}
+            [data-testid="stStatusWidget"] {visibility: hidden;}
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 # ============ 尺碼表 ============
 HAN_YI_CHART = [(38, "S"), (40, "M"), (42, "L"), (44, "XL"), (46, "XXL")]
 ALL_ITEMS = ["汗衣", "藍扯衫", "藍扯褲", "安全鞋", "水鞋"]
@@ -85,7 +100,6 @@ def recommend_one(item_type, height, weight, top_n=10):
     return {"dims": dims, "size": size}
 
 # ============ 介面設計 ============
-st.set_page_config(page_title="衣服尺寸推薦", page_icon="👕", layout="centered")
 st.title("👕 衣服尺寸推薦系統")
 
 tab1, tab2, tab3 = st.tabs(["🔍 查詢建議", "➕ 新增人員", "📊 資料分佈"])
@@ -125,7 +139,6 @@ with tab1:
                         
                     with st.container(border=True):
                         st.markdown(f"### {t}")
-                        # 移除信心度，只顯示尺寸與尺碼
                         if t == "汗衣":
                             c1, c2 = st.columns(2)
                             c1.metric("建議尺寸", dim_str)
