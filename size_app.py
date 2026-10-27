@@ -1,4 +1,4 @@
- import streamlit as st
+import streamlit as st
 import json
 from collections import defaultdict
 from streamlit_gsheets import GSheetsConnection
