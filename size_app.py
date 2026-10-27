@@ -7,7 +7,10 @@ import pandas as pd
 # ============ 尺碼表 ============
 # 只有汗衣需要 S/M/L 尺碼轉換
 HAN_YI_CHART = [(38, "S"), (40, "M"), (42, "L"), (44, "XL"), (46, "XXL")]
-ALL_ITEMS = ["汗衣", "藍扯衫", "藍扯褲", "安全鞋"]
+ALL_ITEMS = ["汗衣", "藍扯衫", "藍扯褲", "安全鞋", "水鞋"]
+
+# ============ 管理員密碼 ============
+ADMIN_PASSWORD = "admin123"  # 你可以在這裡修改密碼
 
 # ============ Google Sheets 連接 ============
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -15,8 +18,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def load_data():
     """從 Google Sheets 讀取資料，解析 JSON 字串"""
     try:
-        # 加入 ttl="10s" 避免短時間內頻繁讀取觸發 API 限制
-        df = conn.read(ttl="10s")
+        df = conn.read(ttl="10s")  # 加入 10 秒快取，避免觸發 API 限制
         if df.empty:
             return []
         if 'record' not in df.columns:
@@ -44,7 +46,7 @@ def to_size(item_type, dims):
         if "chest" not in dims:
             return None
         return min(HAN_YI_CHART, key=lambda x: abs(x[0] - dims["chest"]))[1]
-    return None  # 其他品類不需要尺碼
+    return None
 
 # ============ 推薦演算法 ============
 def recommend_one(item_type, height, weight, top_n=10):
@@ -56,7 +58,7 @@ def recommend_one(item_type, height, weight, top_n=10):
     scored = []
     for p in data:
         p_bmi = p["weight"] / (p["height"] / 100) ** 2
-        # 增加了身高差異的敏感度
+        # 身高差異懲罰加大，讓結果更精準
         dist = ((p["height"] - height) / 2) ** 2 + ((p_bmi - bmi) / 2) ** 2
         scored.append((dist, p["items"][item_type]))
         
@@ -73,7 +75,7 @@ def recommend_one(item_type, height, weight, top_n=10):
     dims = {k: round(v / total_w, 1) for k, v in dims_sum.items()}
     size = to_size(item_type, dims)
     
-    # 新的信心度計算
+    # 計算信心度
     if len(neighbors) == 1:
         conf = 0.3
     else:
@@ -110,7 +112,7 @@ with tab1:
                         st.info(f"❌ {t}：資料庫尚無此品類資料")
                         continue
                     
-                    # 組合部位尺寸字串
+                    # 組合顯示字串
                     if t == "汗衣":
                         dim_str = f"{r['dims'].get('chest','?')}"
                     elif t == "藍扯衫":
@@ -119,11 +121,11 @@ with tab1:
                         dim_str = f"{r['dims'].get('waist','?')} x {r['dims'].get('length','?')}"
                     elif t == "安全鞋":
                         dim_str = f"{r['dims'].get('size','?')}"
+                    elif t == "水鞋":
+                        dim_str = f"US {r['dims'].get('size','?')}"
                         
                     with st.container(border=True):
                         st.markdown(f"### {t}")
-                        
-                        # 汗衣顯示尺碼，其他只顯示尺寸與信心度
                         if t == "汗衣":
                             c1, c2, c3 = st.columns(3)
                             c1.metric("建議尺寸", dim_str)
@@ -141,7 +143,6 @@ with tab1:
 with tab2:
     st.subheader("新增人員資料")
     with st.form("add_form"):
-        name = st.text_input("姓名")
         c1, c2 = st.columns(2)
         with c1:
             h = st.number_input("身高 (cm)", 100.0, 250.0, 172.0, 0.5, key="a_h")
@@ -152,39 +153,44 @@ with tab2:
         chest = st.number_input("汗衣 胸寬", 0.0, 60.0, 42.0, 0.5, key="a_c")
         shirt = st.text_input("藍扯衫 a x b（例 15x33）", "15x33")
         pants = st.text_input("藍扯褲 腰圍x褲長（例 32x42）", "32x42")
-        shoes = st.number_input("安全鞋 尺寸（例 42）", 0.0, 50.0, 0.0, 0.5, key="a_s")
+        safety_shoes = st.number_input("安全鞋 尺寸（例 42）", 0.0, 50.0, 0.0, 0.5, key="a_s")
+        rain_boots = st.text_input("水鞋 US尺寸（例 9）", "")
 
         submitted = st.form_submit_button("✅ 儲存", type="primary", use_container_width=True)
+        
         if submitted:
-            if not name.strip():
-                st.error("請輸入姓名")
-            else:
-                items = {}
-                if chest > 0:
-                    items["汗衣"] = {"chest": float(chest)}
-                if shirt.strip():
-                    try:
-                        a, b = shirt.lower().replace(" ", "").split("x")
-                        items["藍扯衫"] = {"a": float(a), "b": float(b)}
-                    except ValueError:
-                        st.error("藍扯衫格式錯誤，應為 15x33")
-                if pants.strip():
-                    try:
-                        wa, le = pants.lower().replace(" ", "").split("x")
-                        items["藍扯褲"] = {"waist": float(wa), "length": float(le)}
-                    except ValueError:
-                        st.error("藍扯褲格式錯誤，應為 32x42")
-                if shoes > 0:
-                    items["安全鞋"] = {"size": float(shoes)}
+            items = {}
+            if chest > 0:
+                items["汗衣"] = {"chest": float(chest)}
+            if shirt.strip():
+                try:
+                    a, b = shirt.lower().replace(" ", "").split("x")
+                    items["藍扯衫"] = {"a": float(a), "b": float(b)}
+                except ValueError:
+                    st.error("藍扯衫格式錯誤，應為 15x33")
+            if pants.strip():
+                try:
+                    wa, le = pants.lower().replace(" ", "").split("x")
+                    items["藍扯褲"] = {"waist": float(wa), "length": float(le)}
+                except ValueError:
+                    st.error("藍扯褲格式錯誤，應為 32x42")
+            if safety_shoes > 0:
+                items["安全鞋"] = {"size": float(safety_shoes)}
+            if rain_boots.strip():
+                try:
+                    items["水鞋"] = {"size": float(rain_boots)}
+                except ValueError:
+                    st.error("水鞋格式錯誤，請輸入數字（例如 9 或 8.5）")
 
-                if items:
-                    data = load_data()
-                    data.append({"name": name.strip(), "height": h, "weight": w, "items": items})
-                    if save_data(data):
-                        st.success(f"✅ 已新增 {name}")
-                        st.rerun()
-                else:
-                    st.warning("請至少填一項尺寸")
+            if items:
+                final_name = "匿名"
+                data = load_data()
+                data.append({"name": final_name, "height": h, "weight": w, "items": items})
+                if save_data(data):
+                    st.success(f"✅ 已成功新增資料")
+                    st.rerun()
+            else:
+                st.warning("請至少填一項尺寸")
 
 # ---------- Tab 3：分佈 ----------
 with tab3:
@@ -212,10 +218,11 @@ with tab3:
                     parts = f"{d.get('waist', '')} x {d.get('length', '')}"
                 elif t == "安全鞋":
                     parts = f"鞋碼 {d.get('size', '')}"
+                elif t == "水鞋":
+                    parts = f"US {d.get('size', '')}"
                 else:
                     parts = "  ".join(f"{k}={v}" for k, v in d.items())
                 
-                # 只有汗衣在資料分佈表顯示尺碼
                 size_display = to_size(t, d) if t == "汗衣" else "—"
                 table.append({
                     "姓名": p["name"], 
@@ -227,11 +234,20 @@ with tab3:
             st.dataframe(table, use_container_width=True, hide_index=True)
 
         st.markdown("---")
+        
+        # 匯出與清空功能
         c1, c2 = st.columns(2)
         with c1:
             st.download_button("⬇️ 匯出 JSON", json.dumps(data, ensure_ascii=False, indent=2),
                                file_name="clothing_data.json", mime="application/json", use_container_width=True)
         with c2:
-            if st.button("🗑️ 清空所有資料", use_container_width=True):
-                save_data([])
-                st.rerun()
+            with st.popover("🗑️ 清空所有資料", use_container_width=True):
+                st.write("⚠️ 確定要刪除所有資料嗎？")
+                pwd = st.text_input("請輸入管理員密碼", type="password", key="del_pwd")
+                if st.button("確認刪除", type="primary", use_container_width=True):
+                    if pwd == ADMIN_PASSWORD:
+                        save_data([])
+                        st.success("✅ 所有資料已清空！")
+                        st.rerun()
+                    else:
+                        st.error("❌ 密碼錯誤，無法刪除！")
