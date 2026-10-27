@@ -26,15 +26,21 @@ HAN_YI_CHART = [(38, "S"), (40, "M"), (42, "L"), (44, "XL"), (46, "XXL")]
 ALL_ITEMS = ["汗衣", "藍扯衫", "藍扯褲", "安全鞋", "水鞋"]
 ADMIN_PASSWORD = "admin123"
 
-# 自動生成 0.5 為一格的選項清單
-def generate_options(start, end):
-    return [float(x) for x in np.arange(start, end + 0.1, 0.5)]
+# 自動生成選項清單
+def generate_options(start, end, step):
+    return [float(x) for x in np.arange(start, end + 0.1, step)]
 
-# 藍扯衫與藍扯褲下拉選單範圍 (0.5 一格)
-SHIRT_A_OPTIONS = generate_options(13.0, 16.0)   # 肩寬/胸寬
-SHIRT_B_OPTIONS = generate_options(28.0, 40.0)   # 衣長/袖長
-PANTS_W_OPTIONS = generate_options(28.0, 38.0)   # 腰圍
-PANTS_L_OPTIONS = generate_options(36.0, 46.0)   # 褲長
+# 1. 汗衣專屬選項 (顯示相應 Size)
+CHEST_OPTIONS_RAW = [38.0, 40.0, 42.0, 44.0, 46.0]
+CHEST_OPTIONS_DISPLAY = [f"{int(c)} ({next(s for v, s in HAN_YI_CHART if v == c)})" for c in CHEST_OPTIONS_RAW]
+
+# 2. 其他品類選項 (0.5 一格)
+SHIRT_A_OPTIONS = generate_options(13.0, 17.0, 0.5)  # 藍扯衫 a (13-17)
+SHIRT_B_OPTIONS = generate_options(28.0, 40.0, 0.5)  # 藍扯衫 b
+PANTS_W_OPTIONS = generate_options(28.0, 38.0, 0.5)  # 藍扯褲 waist
+PANTS_L_OPTIONS = generate_options(36.0, 46.0, 0.5)  # 藍扯褲 length
+SAFETY_OPTIONS = generate_options(36.0, 48.0, 0.5)   # 安全鞋 (36-48)
+BOOTS_OPTIONS = generate_options(6.0, 11.0, 0.5)     # 水鞋 (US 6-11)
 
 # ============ 跨性別偏移量配置 ============
 FEMALE_OFFSET_CONFIG = {
@@ -251,15 +257,16 @@ with tab2:
         build_input = st.selectbox("身型", ["標準", "精壯 / 運動型", "偏肉 / 寬體"])
         
         st.markdown("**各品類尺寸 — 留空表示沒有**")
-        chest = st.number_input("汗衣 胸寬 (38/40/42/44...)", 0.0, 60.0, 42.0, 2.0, key="a_c")
         
-        # 藍扯衫與藍扯褲表單
+        # 汗衣 (顯示 Size)
+        chest_display_sel = st.selectbox("汗衣 胸寬", ["留空"] + CHEST_OPTIONS_DISPLAY)
+        
         st.markdown("**藍扯衫尺寸**")
         cs1, cs2 = st.columns(2)
         with cs1:
-            shirt_a_sel = st.selectbox("藍扯衫 a (肩寬/胸寬)", ["留空"] + SHIRT_A_OPTIONS)
+            shirt_a_sel = st.selectbox("藍扯衫 a", ["留空"] + SHIRT_A_OPTIONS)
         with cs2:
-            shirt_b_sel = st.selectbox("藍扯衫 b (衣長/袖長)", ["留空"] + SHIRT_B_OPTIONS)
+            shirt_b_sel = st.selectbox("藍扯衫 b", ["留空"] + SHIRT_B_OPTIONS)
             
         st.markdown("**藍扯褲尺寸**")
         cp1, cp2 = st.columns(2)
@@ -268,15 +275,21 @@ with tab2:
         with cp2:
             pants_l_sel = st.selectbox("藍扯褲 褲長", ["留空"] + PANTS_L_OPTIONS)
 
-        safety_shoes = st.number_input("安全鞋 尺寸（例 42）", 0.0, 50.0, 0.0, 0.5, key="a_s")
-        rain_boots = st.text_input("水鞋 US尺寸（例 9）", "")
+        cs1, cs2 = st.columns(2)
+        with cs1:
+            safety_sel = st.selectbox("安全鞋 尺寸", ["留空"] + SAFETY_OPTIONS)
+        with cs2:
+            boots_sel = st.selectbox("水鞋 US尺寸", ["留空"] + BOOTS_OPTIONS)
 
         submitted = st.form_submit_button("✅ 儲存", type="primary", use_container_width=True)
         
         if submitted:
             items = {}
-            if chest > 0:
-                items["汗衣"] = {"chest": float(chest)}
+            
+            # 處理汗衣的顯示字串轉換回數字
+            if chest_display_sel != "留空":
+                chest_val = float(chest_display_sel.split(" ")[0])
+                items["汗衣"] = {"chest": chest_val}
                 
             if shirt_a_sel != "留空" and shirt_b_sel != "留空":
                 items["藍扯衫"] = {"a": float(shirt_a_sel), "b": float(shirt_b_sel)}
@@ -284,13 +297,11 @@ with tab2:
             if pants_w_sel != "留空" and pants_l_sel != "留空":
                 items["藍扯褲"] = {"waist": float(pants_w_sel), "length": float(pants_l_sel)}
                 
-            if safety_shoes > 0:
-                items["安全鞋"] = {"size": float(safety_shoes)}
-            if rain_boots.strip():
-                try:
-                    items["水鞋"] = {"size": float(rain_boots)}
-                except ValueError:
-                    st.error("水鞋格式錯誤，請輸入數字（例如 9 或 8.5）")
+            if safety_sel != "留空":
+                items["安全鞋"] = {"size": float(safety_sel)}
+                
+            if boots_sel != "留空":
+                items["水鞋"] = {"size": float(boots_sel)}
 
             if items:
                 data = load_data()
@@ -455,13 +466,19 @@ with tab3:
                         default_build_idx = build_options.index(selected_person["build"]) if selected_person.get("build") in build_options else 0
                         edit_build = st.selectbox("身型", build_options, index=default_build_idx)
                             
-                        st.write("修改尺寸（留空或填 0 表示刪除此項目）：")
+                        st.write("修改尺寸（全部使用下拉選單）：")
                         old_items = selected_person.get("items", {})
                         
-                        old_chest = old_items.get("汗衣", {}).get("chest", 0.0)
-                        new_chest = st.number_input("汗衣 胸寬", value=float(old_chest), step=2.0)
+                        # 汗衣 (修改時也用顯示 Size 的選單)
+                        old_chest = old_items.get("汗衣", {}).get("chest", None)
+                        old_chest_display = "留空"
+                        if old_chest in CHEST_OPTIONS_RAW:
+                            idx = CHEST_OPTIONS_RAW.index(old_chest)
+                            old_chest_display = CHEST_OPTIONS_DISPLAY[idx]
+                            
+                        chest_edit_display = st.selectbox("汗衣 胸寬", ["留空"] + CHEST_OPTIONS_DISPLAY, index=(["留空"] + CHEST_OPTIONS_DISPLAY).index(old_chest_display))
                         
-                        # 藍扯衫 (修改時也用下拉選單)
+                        # 藍扯衫
                         st.markdown("**藍扯衫尺寸**")
                         old_shirt = old_items.get("藍扯衫", {})
                         cs1, cs2 = st.columns(2)
@@ -472,7 +489,7 @@ with tab3:
                             default_b = old_shirt.get("b", "留空")
                             shirt_b_edit = st.selectbox("藍扯衫 b", ["留空"] + SHIRT_B_OPTIONS, index=(["留空"] + SHIRT_B_OPTIONS).index(default_b) if default_b in SHIRT_B_OPTIONS else 0)
                         
-                        # 藍扯褲 (修改時也用下拉選單)
+                        # 藍扯褲
                         st.markdown("**藍扯褲尺寸**")
                         old_pants = old_items.get("藍扯褲", {})
                         cp1, cp2 = st.columns(2)
@@ -483,26 +500,31 @@ with tab3:
                             default_l = old_pants.get("length", "留空")
                             pants_l_edit = st.selectbox("藍扯褲 褲長", ["留空"] + PANTS_L_OPTIONS, index=(["留空"] + PANTS_L_OPTIONS).index(default_l) if default_l in PANTS_L_OPTIONS else 0)
 
-                        old_safety = old_items.get("安全鞋", {}).get("size", 0.0)
-                        new_safety = st.number_input("安全鞋 尺寸", value=float(old_safety), step=0.5)
-                        
-                        old_boots = old_items.get("水鞋", {}).get("size", 0.0)
-                        new_boots = st.number_input("水鞋 US尺寸", value=float(old_boots), step=0.5)
+                        # 安全鞋與水鞋
+                        cs1, cs2 = st.columns(2)
+                        old_safety = old_items.get("安全鞋", {}).get("size", "留空")
+                        with cs1:
+                            safety_edit = st.selectbox("安全鞋 尺寸", ["留空"] + SAFETY_OPTIONS, index=(["留空"] + SAFETY_OPTIONS).index(old_safety) if old_safety in SAFETY_OPTIONS else 0)
+                            
+                        old_boots = old_items.get("水鞋", {}).get("size", "留空")
+                        with cs2:
+                            boots_edit = st.selectbox("水鞋 US尺寸", ["留空"] + BOOTS_OPTIONS, index=(["留空"] + BOOTS_OPTIONS).index(old_boots) if old_boots in BOOTS_OPTIONS else 0)
                         
                         update_btn = st.form_submit_button("💾 儲存修改", type="primary")
                         
                         if update_btn:
                             new_items = {}
-                            if new_chest > 0: new_items["汗衣"] = {"chest": float(new_chest)}
                             
+                            if chest_edit_display != "留空":
+                                chest_val = float(chest_edit_display.split(" ")[0])
+                                new_items["汗衣"] = {"chest": chest_val}
+                                
                             if shirt_a_edit != "留空" and shirt_b_edit != "留空":
                                 new_items["藍扯衫"] = {"a": float(shirt_a_edit), "b": float(shirt_b_edit)}
-                                
                             if pants_w_edit != "留空" and pants_l_edit != "留空":
                                 new_items["藍扯褲"] = {"waist": float(pants_w_edit), "length": float(pants_l_edit)}
-                                
-                            if new_safety > 0: new_items["安全鞋"] = {"size": float(new_safety)}
-                            if new_boots > 0: new_items["水鞋"] = {"size": float(new_boots)}
+                            if safety_edit != "留空": new_items["安全鞋"] = {"size": float(safety_edit)}
+                            if boots_edit != "留空": new_items["水鞋"] = {"size": float(boots_edit)}
                             
                             for i, p in enumerate(data):
                                 if p.get("id") == selected_person.get("id"):
