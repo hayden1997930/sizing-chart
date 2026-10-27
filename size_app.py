@@ -179,11 +179,12 @@ with tab1:
     with c2:
         weight = st.number_input("體重 (kg)", 20.0, 200.0, 70.0, 0.5, key="q_w")
         
+    # 這裡已經修正為 c3 和 c4
     c3, c4 = st.columns(2)
     with c3:
         build = st.selectbox("身型（選填）", ["不確定", "精壯 / 運動型", "標準", "偏肉 / 寬體"])
         if build == "不確定": build = None
-    with c5:
+    with c4:
         fit_pref = st.selectbox("穿著偏好", ["標準合身", "寬鬆 / 預留空間", "修身 / 偏緊"])
 
     if st.button("🎯 推薦尺寸", type="primary", use_container_width=True):
