@@ -93,9 +93,10 @@ def recommend_one(item_type, height, weight, top_n=10):
     size = to_size(item_type, dims)
     return {"dims": dims, "size": size}
 
-# ============ AI 分析與估算 (阿里雲百煉) ============
+# ============ AI 分析與估算 (阿里雲百煉 香港地域) ============
 def get_ai_analysis_and_estimate(height, weight, results):
-    api_key = "sk-ws-H.RMYLYIM.VCSC.MEQCIE_FN5tRLO5ulnVjUZW1QZaPykz9LeU9IZOX9yHVskKZAiAeaIUMHhVoB1b3rzj2zoRMqFo-uMyVZ0USkTy2ir3e5g"
+    # 已寫入你截圖中的專屬 API Key
+    api_key = "sk-ws-H.RMYLYXD.7x9y.MEUCIDsdA26jYKvQjzi3IR2O5FPBVUylJhAI4O8v"
     
     # 準備資料庫的參考結果
     summary = f"用戶身高 {height}cm，體重 {weight}kg。\n"
@@ -130,13 +131,14 @@ def get_ai_analysis_and_estimate(height, weight, results):
     """
 
     try:
-        url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        # 使用你截圖中的香港地域專屬 OpenAI 兼容地址
+        url = "https://ws-bye6xifz3stx3t0t.cn-hongkong.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "qwen-turbo",
+            "model": "qwen-turbo", 
             "messages": [{"role": "user", "content": prompt}]
         }
         
@@ -145,7 +147,7 @@ def get_ai_analysis_and_estimate(height, weight, results):
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
         else:
-            return f"❌ AI 分析失敗 (Error {response.status_code})：請檢查 API Key 或網絡連線。"
+            return f"❌ AI 分析失敗 (Error {response.status_code})：請檢查 API Key 或網絡連線。\n回傳訊息：{response.text}"
     except Exception as e:
         return f"❌ 無法連接 AI 服務：{e}"
 
