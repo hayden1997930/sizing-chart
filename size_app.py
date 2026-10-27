@@ -5,20 +5,18 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
 # ============ 尺碼表 ============
-# 只有汗衣需要 S/M/L 尺碼轉換
 HAN_YI_CHART = [(38, "S"), (40, "M"), (42, "L"), (44, "XL"), (46, "XXL")]
 ALL_ITEMS = ["汗衣", "藍扯衫", "藍扯褲", "安全鞋", "水鞋"]
 
 # ============ 管理員密碼 ============
-ADMIN_PASSWORD = "admin123"  # 你可以在這裡修改密碼
+ADMIN_PASSWORD = "admin123"
 
 # ============ Google Sheets 連接 ============
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
-    """從 Google Sheets 讀取資料，解析 JSON 字串"""
     try:
-        df = conn.read(ttl="10s")  # 加入 10 秒快取，避免觸發 API 限制
+        df = conn.read(ttl="10s")
         if df.empty:
             return []
         if 'record' not in df.columns:
@@ -30,7 +28,6 @@ def load_data():
         return []
 
 def save_data(data):
-    """把整個資料列表寫回 Google Sheets"""
     try:
         records = [json.dumps(p, ensure_ascii=False) for p in data]
         df_to_save = pd.DataFrame({'record': records})
@@ -58,7 +55,6 @@ def recommend_one(item_type, height, weight, top_n=10):
     scored = []
     for p in data:
         p_bmi = p["weight"] / (p["height"] / 100) ** 2
-        # 身高差異懲罰加大，讓結果更精準
         dist = ((p["height"] - height) / 2) ** 2 + ((p_bmi - bmi) / 2) ** 2
         scored.append((dist, p["items"][item_type]))
         
@@ -72,17 +68,21 @@ def recommend_one(item_type, height, weight, top_n=10):
         for k, v in item.items():
             dims_sum[k] += v * w
             
-    dims = {k: round(v / total_w, 1) for k, v in dims_sum.items()}
-    size = to_size(item_type, dims)
+    # 計算平均尺寸
+    raw_dims = {k: v / total_w for k, v in dims_sum.items()}
     
-    # 計算信心度
-    if len(neighbors) == 1:
-        conf = 0.3
+    # 處理小數點：汗衣鎖死雙數，其他四捨五入到 0.5
+    dims = {}
+    if item_type == "汗衣":
+        raw_chest = raw_dims.get("chest", 42.0)
+        closest_even = round(raw_chest / 2) * 2
+        dims["chest"] = float(closest_even)
     else:
-        avg_dist = sum(d for d, _ in neighbors) / len(neighbors)
-        conf = 0.95 / (1 + avg_dist)
-        
-    return {"dims": dims, "size": size, "conf": conf}
+        for k, v in raw_dims.items():
+            dims[k] = round(v * 2) / 2
+            
+    size = to_size(item_type, dims)
+    return {"dims": dims, "size": size}
 
 # ============ 介面設計 ============
 st.set_page_config(page_title="衣服尺寸推薦", page_icon="👕", layout="centered")
@@ -112,9 +112,8 @@ with tab1:
                         st.info(f"❌ {t}：資料庫尚無此品類資料")
                         continue
                     
-                    # 組合顯示字串
                     if t == "汗衣":
-                        dim_str = f"{r['dims'].get('chest','?')}"
+                        dim_str = f"{int(r['dims'].get('chest', 0))}"
                     elif t == "藍扯衫":
                         dim_str = f"{r['dims'].get('a','?')} x {r['dims'].get('b','?')}"
                     elif t == "藍扯褲":
@@ -126,18 +125,13 @@ with tab1:
                         
                     with st.container(border=True):
                         st.markdown(f"### {t}")
+                        # 移除信心度，只顯示尺寸與尺碼
                         if t == "汗衣":
-                            c1, c2, c3 = st.columns(3)
-                            c1.metric("建議尺寸", dim_str)
-                            c2.metric("建議尺碼", r["size"] or "—")
-                            c3.metric("信心度", f"{r['conf']:.0%}")
-                        else:
                             c1, c2 = st.columns(2)
                             c1.metric("建議尺寸", dim_str)
-                            c2.metric("信心度", f"{r['conf']:.0%}")
-                            
-                        if r["conf"] < 0.5:
-                            st.caption("⚠️ 信心度偏低，建議試穿")
+                            c2.metric("建議尺碼", r["size"] or "—")
+                        else:
+                            st.metric("建議尺寸", dim_str)
 
 # ---------- Tab 2：新增 ----------
 with tab2:
@@ -150,7 +144,7 @@ with tab2:
             w = st.number_input("體重 (kg)", 20.0, 200.0, 70.0, 0.5, key="a_w")
             
         st.markdown("**各品類尺寸 — 留空表示沒有**")
-        chest = st.number_input("汗衣 胸寬", 0.0, 60.0, 42.0, 0.5, key="a_c")
+        chest = st.number_input("汗衣 胸寬 (38/40/42/44...)", 0.0, 60.0, 42.0, 2.0, key="a_c")
         shirt = st.text_input("藍扯衫 a x b（例 15x33）", "15x33")
         pants = st.text_input("藍扯褲 腰圍x褲長（例 32x42）", "32x42")
         safety_shoes = st.number_input("安全鞋 尺寸（例 42）", 0.0, 50.0, 0.0, 0.5, key="a_s")
@@ -209,7 +203,6 @@ with tab3:
             for p in rows:
                 d = p["items"][t]
                 
-                # 根據品類顯示不同的部位名稱
                 if t == "汗衣":
                     parts = f"胸寬 {d.get('chest', '')}"
                 elif t == "藍扯衫":
@@ -235,7 +228,6 @@ with tab3:
 
         st.markdown("---")
         
-        # 匯出與清空功能
         c1, c2 = st.columns(2)
         with c1:
             st.download_button("⬇️ 匯出 JSON", json.dumps(data, ensure_ascii=False, indent=2),
