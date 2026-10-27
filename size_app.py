@@ -3,6 +3,7 @@ import json
 from collections import defaultdict
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+import numpy as np  # 引入 numpy 進行統計計算
 import time
 from datetime import datetime
 
@@ -58,28 +59,51 @@ def to_size(item_type, dims):
         return min(HAN_YI_CHART, key=lambda x: abs(x[0] - dims["chest"]))[1]
     return None
 
-# ============ 推薦演算法 (KNN - 已標準化) ============
-def recommend_one(item_type, height, weight, top_n=10):
+# ============ 推薦演算法 (KNN - 動態 Z-Score 優化版) ============
+def recommend_one(item_type, height, weight, top_n=5):
+    # 1. 取得該品類的所有資料
     data = [p for p in load_data() if item_type in p.get("items", {})]
     if not data:
         return None
     
-    bmi = weight / (height / 100) ** 2
+    # 2. 提取所有人的身高與體重，計算均值與標準差
+    heights = np.array([p["height"] for p in data])
+    weights = np.array([p["weight"] for p in data])
+    
+    # 計算 BMI
+    bmis = weights / ((heights / 100) ** 2)
+    
+    h_mean, h_std = np.mean(heights), np.std(heights)
+    b_mean, b_std = np.mean(bmis), np.std(bmis)
+    
+    # 防止標準差為 0 的情況 (例如資料庫只有一個人)
+    h_std = h_std if h_std > 0 else 1.0
+    b_std = b_std if b_std > 0 else 1.0
+    
+    # 3. 計算輸入者的 BMI 與 Z-Score
+    input_bmi = weight / ((height / 100) ** 2)
+    input_h_z = (height - h_mean) / h_std
+    input_b_z = (input_bmi - b_mean) / b_std
+    
+    # 4. 計算距離
     scored = []
+    w_bmi = 1.25  # BMI 權重
+    
     for p in data:
-        p_bmi = p["weight"] / (p["height"] / 100) ** 2
+        p_bmi = p["weight"] / ((p["height"] / 100) ** 2)
+        p_h_z = (p["height"] - h_mean) / h_std
+        p_b_z = (p_bmi - b_mean) / b_std
         
-        # 【修正】特徵標準化：將身高差除以 10，BMI 差除以 3。
-        # 並且因為體重/胖瘦對衣服合身度影響很大，將 BMI 的權重乘 1.5 倍。
-        height_diff = (p["height"] - height) / 10
-        bmi_diff = (p_bmi - bmi) / 3
-        dist = (height_diff ** 2) + ((bmi_diff * 1.5) ** 2)
+        # 距離公式：(身高 Z-Score 差)^2 + (BMI Z-Score 差 * 權重)^2
+        dist = ((p_h_z - input_h_z) ** 2) + (((p_b_z - input_b_z) * w_bmi) ** 2)
         
         scored.append((dist, p["items"][item_type]))
         
+    # 5. 排序並取最接近的 top_n 個人
     scored.sort(key=lambda x: x[0])
     neighbors = scored[:top_n]
 
+    # 6. 加權平均
     dims_sum, total_w = defaultdict(float), 0.0
     for dist, item in neighbors:
         w = 1 / (dist + 0.1)
@@ -259,7 +283,7 @@ with tab3:
         st.dataframe(display_table, use_container_width=True, hide_index=True)
         
         # ==========================================
-        # 數據視覺化 (保留散點圖，加入尺寸過濾)
+        # 數據視覺化
         # ==========================================
         st.markdown("---")
         st.markdown("### 📈 各品類尺寸分佈圖")
@@ -271,13 +295,12 @@ with tab3:
             if chart_item in p.get("items", {}):
                 dims = p["items"][chart_item]
                 
-                # 根據品類決定圖表要顯示的「標籤（顏色）」是什麼
                 if chart_item == "汗衣":
-                    label = to_size(chart_item, dims) # 顯示 S/M/L
+                    label = to_size(chart_item, dims)
                 elif chart_item == "藍扯衫":
-                    label = f"{dims.get('a', '')}x{dims.get('b', '')}" # 顯示 15x33
+                    label = f"{dims.get('a', '')}x{dims.get('b', '')}"
                 elif chart_item == "藍扯褲":
-                    label = f"{dims.get('waist', '')}x{dims.get('length', '')}" # 顯示 32x42
+                    label = f"{dims.get('waist', '')}x{dims.get('length', '')}"
                 elif chart_item == "安全鞋":
                     label = f"鞋碼 {dims.get('size', '')}"
                 elif chart_item == "水鞋":
@@ -292,8 +315,6 @@ with tab3:
         
         if chart_data:
             df_chart = pd.DataFrame(chart_data)
-            
-            # 使用原生散點圖，以「尺寸」作為顏色區分
             st.scatter_chart(
                 df_chart,
                 x="身高",
