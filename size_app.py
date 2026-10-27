@@ -27,9 +27,10 @@ ADMIN_PASSWORD = "admin123"
 # ============ Google Sheets 連接 ============
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# 取消 ttl="10s" 的快取，確保每次都讀取最新資料
 def load_data():
     try:
-        df = conn.read(ttl="10s")
+        df = conn.read(ttl=0)
         if df.empty or 'record' not in df.columns:
             return []
         records = df['record'].dropna().tolist()
@@ -43,6 +44,8 @@ def save_data(data):
         records = [json.dumps(p, ensure_ascii=False) for p in data]
         df_to_save = pd.DataFrame({'record': records})
         conn.update(worksheet="data", data=df_to_save)
+        # 清除 Streamlit 的資料快取，強制下次重新讀取
+        st.cache_data.clear()
         return True
     except Exception as e:
         st.error(f"儲存資料失敗: {e}")
@@ -207,7 +210,7 @@ with tab2:
             else:
                 st.warning("請至少填一項尺寸")
 
-# ---------- Tab 3：資料管理 (包含分佈與修改) ----------
+# ---------- Tab 3：資料管理 ----------
 with tab3:
     st.subheader("📊 資料庫一覽與修改")
     
@@ -215,7 +218,6 @@ with tab3:
     if not data:
         st.info("尚無資料。")
     else:
-        # 建立表格
         display_table = []
         for p in data:
             row = {"ID": p.get("id", "-"), "身高(cm)": p["height"], "體重(kg)": p["weight"]}
