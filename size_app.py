@@ -26,6 +26,15 @@ HAN_YI_CHART = [(38, "S"), (40, "M"), (42, "L"), (44, "XL"), (46, "XXL")]
 ALL_ITEMS = ["汗衣", "藍扯衫", "藍扯褲", "安全鞋", "水鞋"]
 ADMIN_PASSWORD = "admin123"
 
+# ============ 跨性別偏移量配置 (男性 -> 女性) ============
+FEMALE_OFFSET_CONFIG = {
+    "汗衣": {"chest": -1.5},
+    "藍扯衫": {"a": -1.0, "b": -1.5},
+    "藍扯褲": {"waist": -1.5, "length": -1.0},
+    "安全鞋": {"size": -1.5},
+    "水鞋": {"size": -1.5}
+}
+
 # ============ Google Sheets 連接 ============
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -59,21 +68,27 @@ def to_size(item_type, dims):
         return min(HAN_YI_CHART, key=lambda x: abs(x[0] - dims["chest"]))[1]
     return None
 
-# ============ 推薦演算法 (KNN - 權重解耦 & 身型懲罰) ============
-def recommend_one(item_type, height, weight, gender, build, fit_pref, top_n=5):
-    # 1. 取得該品類的所有資料
-    all_data = [p for p in load_data() if item_type in p.get("items", {})]
-    if not all_data:
-        return None
+# ============ 推薦演算法 (KNN - 性別偏移 & 權重解耦) ============
+def recommend_one(item_type, height, weight, target_gender, build, fit_pref, top_n=5, female_threshold=5):
+    all_data = load_data()
+    
+    # 1. 篩選同性別資料
+    same_gender_data = [p for p in all_data if p.get("gender", "男") == target_gender and item_type in p.get("items", {})]
+    
+    is_using_offset = False
+    use_data = same_gender_data
+    
+    # 2. 觸發跨性別轉換 (女性樣本不足借用男性)
+    if target_gender == "女" and len(same_gender_data) < female_threshold:
+        use_data = [p for p in all_data if p.get("gender", "男") == "男" and item_type in p.get("items", {})]
+        is_using_offset = True
         
-    # 2. 性別過濾
-    data = [p for p in all_data if p.get("gender") == gender]
-    if len(data) < 2:
-        data = all_data
+    if not use_data:
+        return None
 
-    # 3. 動態計算均值與標準差
-    heights = np.array([p["height"] for p in data])
-    weights = np.array([p["weight"] for p in data])
+    # 3. 動態 Z-Score 標準化
+    heights = np.array([p["height"] for p in use_data])
+    weights = np.array([p["weight"] for p in use_data])
     bmis = weights / ((heights / 100) ** 2)
     
     h_mean, h_std = np.mean(heights), np.std(heights)
@@ -81,74 +96,71 @@ def recommend_one(item_type, height, weight, gender, build, fit_pref, top_n=5):
     h_std = h_std if h_std > 0 else 1.0
     b_std = b_std if b_std > 0 else 1.0
     
-    # 4. 輸入者的 Z-Score
     input_bmi = weight / ((height / 100) ** 2)
     target_h_norm = (height - h_mean) / h_std
     target_bmi_norm = (input_bmi - b_mean) / b_std
     
-    # === 權重解耦 (上裝 vs 下裝) ===
+    # 4. 權重解耦
     if item_type == "藍扯褲":
-        w_height = 1.2  # 褲長看身高
-        w_bmi = 0.8     # 腰圍減少純 BMI 依賴
+        w_height, w_bmi = 1.2, 0.8
     else:
-        w_height = 1.0
-        w_bmi = 1.25    # 上裝看胸寬，BMI 較準
+        w_height, w_bmi = 1.0, 1.25
 
     scored = []
-    for p in data:
+    for p in use_data:
         p_bmi = p["weight"] / ((p["height"] / 100) ** 2)
         p_h_norm = (p["height"] - h_mean) / h_std
         p_bmi_norm = (p_bmi - b_mean) / b_std
         
-        # 計算基礎距離 (使用歐氏距離公式)
-        dist = np.sqrt(
-            w_height * ((p_h_norm - target_h_norm) ** 2) +
-            w_bmi * ((p_bmi_norm - target_bmi_norm) ** 2)
-        )
+        dist = np.sqrt(w_height * ((p_h_norm - target_h_norm) ** 2) + w_bmi * ((p_bmi_norm - target_bmi_norm) ** 2))
         
-        # === 身型懲罰 ===
-        # 假設輸入時有選身型，且歷史資料也有身型，若不匹配則加距離
-        if build and p.get("build"):
-            if build != p["build"]:
-                dist += 0.5
-                
+        # 身型懲罰
+        if build and p.get("build") and build != p["build"]:
+            dist += 0.5
+            
         scored.append((dist, p["items"][item_type]))
         
     scored.sort(key=lambda x: x[0])
-    neighbors = scored[:top_n]
+    neighbors = scored[:min(top_n, len(scored))]
 
     # 5. 加權平均
     dims_sum, total_w = defaultdict(float), 0.0
     for dist, item in neighbors:
-        w = 1 / (dist + 0.1)
+        w = 1.0 / (dist + 0.1)
         total_w += w
         for k, v in item.items():
             dims_sum[k] += v * w
             
     raw_dims = {k: v / total_w for k, v in dims_sum.items()}
-    
-    # 6. 穿著偏好微調 (Fit Preference Adjustment)
+
+    # 6. 套用性別偏移量
+    if is_using_offset and item_type in FEMALE_OFFSET_CONFIG:
+        offsets = FEMALE_OFFSET_CONFIG[item_type]
+        for k, offset_val in offsets.items():
+            if k in raw_dims:
+                raw_dims[k] += offset_val
+
+    # 7. 穿著偏好微調
     adjust_val = 0
     if fit_pref == "寬鬆 / 預留空間":
-        adjust_val = 1.0 if item_type != "汗衣" else 2.0  # 汗衣加 2 吋，其他加 1 吋
+        adjust_val = 1.0 if item_type != "汗衣" else 2.0
     elif fit_pref == "修身 / 偏緊":
         adjust_val = -0.5 if item_type != "汗衣" else -1.0
-        
+
+    # 8. 規格化輸出
     dims = {}
     if item_type == "汗衣":
         raw_chest = raw_dims.get("chest", 42.0) + adjust_val
-        closest_even = round(raw_chest / 2) * 2
-        dims["chest"] = float(closest_even)
+        dims["chest"] = float(round(raw_chest / 2) * 2)
     else:
         for k, v in raw_dims.items():
-            # 只有腰圍或 a 值受到寬鬆度影響，褲長/袖長不受影響
             if k in ["waist", "a", "size"]:
                 dims[k] = round((v + adjust_val) * 2) / 2
             else:
                 dims[k] = round(v * 2) / 2
             
     size = to_size(item_type, dims)
-    return {"dims": dims, "size": size}
+    return {"dims": dims, "size": size, "is_offset_used": is_using_offset}
 
 # ============ 介面設計 ============
 st.title("👕 衣服尺寸推薦系統")
@@ -159,16 +171,16 @@ tab1, tab2, tab3 = st.tabs(["🔍 查詢建議", "➕ 新增人員", "📊 資�
 with tab1:
     st.subheader("輸入身形資料，即時獲得建議")
     
-    c1, c2, c3 = st.columns(3)
+    c0, c1, c2 = st.columns(3)
+    with c0:
+        gender = st.selectbox("性別", ["男", "女"], key="q_g")
     with c1:
-        gender = st.selectbox("性別", ["男", "女"])
-    with c2:
         height = st.number_input("身高 (cm)", 100.0, 250.0, 172.0, 0.5, key="q_h")
-    with c3:
+    with c2:
         weight = st.number_input("體重 (kg)", 20.0, 200.0, 70.0, 0.5, key="q_w")
         
-    c4, c5 = st.columns(2)
-    with c4:
+    c3, c4 = st.columns(2)
+    with c3:
         build = st.selectbox("身型（選填）", ["不確定", "精壯 / 運動型", "標準", "偏肉 / 寬體"])
         if build == "不確定": build = None
     with c5:
@@ -206,6 +218,9 @@ with tab1:
                             c2.metric("建議尺碼", r["size"] or "—")
                         else:
                             st.metric("建議尺寸", dim_str)
+                            
+                        if r.get("is_offset_used"):
+                            st.caption("ℹ️ 女性樣本累積中，當前建議已套用人體工學比例轉換 (Gender Offset Mapping)。")
 
 # ---------- 定義共用彈窗 ----------
 if "dialog_type" not in st.session_state:
@@ -227,7 +242,7 @@ with tab2:
     with st.form("add_form", clear_on_submit=True):
         c0, c1, c2 = st.columns(3)
         with c0:
-            gender_input = st.selectbox("性別", ["男", "女"])
+            gender_input = st.radio("性別", ["男", "女"], horizontal=True)
         with c1:
             h = st.number_input("身高 (cm)", 100.0, 250.0, 172.0, 0.5, key="a_h")
         with c2:
@@ -421,7 +436,7 @@ with tab3:
                         st.write("修改基本資料：")
                         ec0, ec1, ec2 = st.columns(3)
                         with ec0:
-                            edit_gender = st.selectbox("性別", ["男", "女"], index=0 if selected_person.get("gender") == "男" else 1)
+                            edit_gender = st.radio("性別", ["男", "女"], index=0 if selected_person.get("gender") == "男" else 1, horizontal=True)
                         with ec1:
                             new_h = st.number_input("身高 (cm)", value=float(selected_person["height"]), step=0.5)
                         with ec2:
