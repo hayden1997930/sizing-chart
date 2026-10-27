@@ -3,7 +3,7 @@ import json
 from collections import defaultdict
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import numpy as np  # 引入 numpy 進行統計計算
+import numpy as np
 import time
 from datetime import datetime
 
@@ -59,51 +59,65 @@ def to_size(item_type, dims):
         return min(HAN_YI_CHART, key=lambda x: abs(x[0] - dims["chest"]))[1]
     return None
 
-# ============ 推薦演算法 (KNN - 動態 Z-Score 優化版) ============
-def recommend_one(item_type, height, weight, top_n=5):
+# ============ 推薦演算法 (KNN - 權重解耦 & 身型懲罰) ============
+def recommend_one(item_type, height, weight, gender, build, fit_pref, top_n=5):
     # 1. 取得該品類的所有資料
-    data = [p for p in load_data() if item_type in p.get("items", {})]
-    if not data:
+    all_data = [p for p in load_data() if item_type in p.get("items", {})]
+    if not all_data:
         return None
-    
-    # 2. 提取所有人的身高與體重，計算均值與標準差
+        
+    # 2. 性別過濾
+    data = [p for p in all_data if p.get("gender") == gender]
+    if len(data) < 2:
+        data = all_data
+
+    # 3. 動態計算均值與標準差
     heights = np.array([p["height"] for p in data])
     weights = np.array([p["weight"] for p in data])
-    
-    # 計算 BMI
     bmis = weights / ((heights / 100) ** 2)
     
     h_mean, h_std = np.mean(heights), np.std(heights)
     b_mean, b_std = np.mean(bmis), np.std(bmis)
-    
-    # 防止標準差為 0 的情況 (例如資料庫只有一個人)
     h_std = h_std if h_std > 0 else 1.0
     b_std = b_std if b_std > 0 else 1.0
     
-    # 3. 計算輸入者的 BMI 與 Z-Score
+    # 4. 輸入者的 Z-Score
     input_bmi = weight / ((height / 100) ** 2)
-    input_h_z = (height - h_mean) / h_std
-    input_b_z = (input_bmi - b_mean) / b_std
+    target_h_norm = (height - h_mean) / h_std
+    target_bmi_norm = (input_bmi - b_mean) / b_std
     
-    # 4. 計算距離
+    # === 權重解耦 (上裝 vs 下裝) ===
+    if item_type == "藍扯褲":
+        w_height = 1.2  # 褲長看身高
+        w_bmi = 0.8     # 腰圍減少純 BMI 依賴
+    else:
+        w_height = 1.0
+        w_bmi = 1.25    # 上裝看胸寬，BMI 較準
+
     scored = []
-    w_bmi = 1.25  # BMI 權重
-    
     for p in data:
         p_bmi = p["weight"] / ((p["height"] / 100) ** 2)
-        p_h_z = (p["height"] - h_mean) / h_std
-        p_b_z = (p_bmi - b_mean) / b_std
+        p_h_norm = (p["height"] - h_mean) / h_std
+        p_bmi_norm = (p_bmi - b_mean) / b_std
         
-        # 距離公式：(身高 Z-Score 差)^2 + (BMI Z-Score 差 * 權重)^2
-        dist = ((p_h_z - input_h_z) ** 2) + (((p_b_z - input_b_z) * w_bmi) ** 2)
+        # 計算基礎距離 (使用歐氏距離公式)
+        dist = np.sqrt(
+            w_height * ((p_h_norm - target_h_norm) ** 2) +
+            w_bmi * ((p_bmi_norm - target_bmi_norm) ** 2)
+        )
         
+        # === 身型懲罰 ===
+        # 假設輸入時有選身型，且歷史資料也有身型，若不匹配則加距離
+        if build and p.get("build"):
+            if build != p["build"]:
+                dist += 0.5
+                
         scored.append((dist, p["items"][item_type]))
         
-    # 5. 排序並取最接近的 top_n 個人
     scored.sort(key=lambda x: x[0])
     neighbors = scored[:top_n]
 
-    # 6. 加權平均
+    # 5. 加權平均
     dims_sum, total_w = defaultdict(float), 0.0
     for dist, item in neighbors:
         w = 1 / (dist + 0.1)
@@ -113,14 +127,25 @@ def recommend_one(item_type, height, weight, top_n=5):
             
     raw_dims = {k: v / total_w for k, v in dims_sum.items()}
     
+    # 6. 穿著偏好微調 (Fit Preference Adjustment)
+    adjust_val = 0
+    if fit_pref == "寬鬆 / 預留空間":
+        adjust_val = 1.0 if item_type != "汗衣" else 2.0  # 汗衣加 2 吋，其他加 1 吋
+    elif fit_pref == "修身 / 偏緊":
+        adjust_val = -0.5 if item_type != "汗衣" else -1.0
+        
     dims = {}
     if item_type == "汗衣":
-        raw_chest = raw_dims.get("chest", 42.0)
+        raw_chest = raw_dims.get("chest", 42.0) + adjust_val
         closest_even = round(raw_chest / 2) * 2
         dims["chest"] = float(closest_even)
     else:
         for k, v in raw_dims.items():
-            dims[k] = round(v * 2) / 2
+            # 只有腰圍或 a 值受到寬鬆度影響，褲長/袖長不受影響
+            if k in ["waist", "a", "size"]:
+                dims[k] = round((v + adjust_val) * 2) / 2
+            else:
+                dims[k] = round(v * 2) / 2
             
     size = to_size(item_type, dims)
     return {"dims": dims, "size": size}
@@ -132,22 +157,32 @@ tab1, tab2, tab3 = st.tabs(["🔍 查詢建議", "➕ 新增人員", "📊 資�
 
 # ---------- Tab 1：查詢 ----------
 with tab1:
-    st.subheader("輸入身高體重，即時獲得建議")
-    col1, col2 = st.columns(2)
-    with col1:
+    st.subheader("輸入身形資料，即時獲得建議")
+    
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        gender = st.selectbox("性別", ["男", "女"])
+    with c2:
         height = st.number_input("身高 (cm)", 100.0, 250.0, 172.0, 0.5, key="q_h")
-    with col2:
+    with c3:
         weight = st.number_input("體重 (kg)", 20.0, 200.0, 70.0, 0.5, key="q_w")
+        
+    c4, c5 = st.columns(2)
+    with c4:
+        build = st.selectbox("身型（選填）", ["不確定", "精壯 / 運動型", "標準", "偏肉 / 寬體"])
+        if build == "不確定": build = None
+    with c5:
+        fit_pref = st.selectbox("穿著偏好", ["標準合身", "寬鬆 / 預留空間", "修身 / 偏緊"])
 
     if st.button("🎯 推薦尺寸", type="primary", use_container_width=True):
-        with st.spinner("正在計算最適合您的尺寸..."):
+        with st.spinner("正在分析身形並計算最適合您的尺寸..."):
             data = load_data()
             if not data:
                 st.warning("⚠️ 資料庫還是空的，請先到「➕ 新增人員」錄入資料。")
             else:
                 st.markdown("---")
                 for t in ALL_ITEMS:
-                    r = recommend_one(t, height, weight)
+                    r = recommend_one(t, height, weight, gender, build, fit_pref)
                     if not r:
                         st.info(f"❌ {t}：資料庫尚無此品類資料")
                         continue
@@ -190,12 +225,16 @@ if st.session_state.dialog_type:
 with tab2:
     st.subheader("新增人員資料")
     with st.form("add_form", clear_on_submit=True):
-        c1, c2 = st.columns(2)
+        c0, c1, c2 = st.columns(3)
+        with c0:
+            gender_input = st.selectbox("性別", ["男", "女"])
         with c1:
             h = st.number_input("身高 (cm)", 100.0, 250.0, 172.0, 0.5, key="a_h")
         with c2:
             w = st.number_input("體重 (kg)", 20.0, 200.0, 70.0, 0.5, key="a_w")
             
+        build_input = st.selectbox("身型", ["標準", "精壯 / 運動型", "偏肉 / 寬體"])
+        
         st.markdown("**各品類尺寸 — 留空表示沒有**")
         chest = st.number_input("汗衣 胸寬 (38/40/42/44...)", 0.0, 60.0, 42.0, 2.0, key="a_c")
         shirt = st.text_input("藍扯衫 a x b（例 15x33）", "15x33")
@@ -236,6 +275,8 @@ with tab2:
                 data.append({
                     "id": new_id, 
                     "name": "匿名", 
+                    "gender": gender_input,
+                    "build": build_input,
                     "height": h, 
                     "weight": w, 
                     "items": items,
@@ -259,6 +300,8 @@ with tab3:
         for p in data:
             row = {
                 "ID": p.get("id", "-"), 
+                "性別": p.get("gender", "-"),
+                "身型": p.get("build", "-"),
                 "新增時間": p.get("created_at", "-"),
                 "身高(cm)": p["height"], 
                 "體重(kg)": p["weight"]
@@ -365,7 +408,7 @@ with tab3:
                 st.rerun()
                 
             st.markdown("#### ✏️ 修改或刪除現有資料")
-            options = {f"ID: {p.get('id', '-')} | {p.get('created_at', '-')} | {p['height']}cm {p['weight']}kg": p for p in data}
+            options = {f"ID: {p.get('id', '-')} | {p.get('gender', '-')} | {p.get('build', '-')} | {p['height']}cm {p['weight']}kg": p for p in data}
             selected_label = st.selectbox("選擇要操作的紀錄：", list(options.keys()))
             
             if selected_label:
@@ -376,11 +419,17 @@ with tab3:
                 with edit_tab:
                     with st.form("edit_form"):
                         st.write("修改基本資料：")
-                        ec1, ec2 = st.columns(2)
+                        ec0, ec1, ec2 = st.columns(3)
+                        with ec0:
+                            edit_gender = st.selectbox("性別", ["男", "女"], index=0 if selected_person.get("gender") == "男" else 1)
                         with ec1:
                             new_h = st.number_input("身高 (cm)", value=float(selected_person["height"]), step=0.5)
                         with ec2:
                             new_w = st.number_input("體重 (kg)", value=float(selected_person["weight"]), step=0.5)
+                            
+                        build_options = ["標準", "精壯 / 運動型", "偏肉 / 寬體"]
+                        default_build_idx = build_options.index(selected_person["build"]) if selected_person.get("build") in build_options else 0
+                        edit_build = st.selectbox("身型", build_options, index=default_build_idx)
                             
                         st.write("修改尺寸（留空或填 0 表示刪除此項目）：")
                         old_items = selected_person.get("items", {})
@@ -422,6 +471,8 @@ with tab3:
                             
                             for i, p in enumerate(data):
                                 if p.get("id") == selected_person.get("id"):
+                                    data[i]["gender"] = edit_gender
+                                    data[i]["build"] = edit_build
                                     data[i]["height"] = new_h
                                     data[i]["weight"] = new_w
                                     data[i]["items"] = new_items
