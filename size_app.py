@@ -35,20 +35,12 @@ CHEST_OPTIONS_RAW = [38.0, 40.0, 42.0, 44.0, 46.0]
 CHEST_OPTIONS_DISPLAY = [f"{int(c)} ({next(s for v, s in HAN_YI_CHART if v == c)})" for c in CHEST_OPTIONS_RAW]
 
 # 2. 其他品類選項 (0.5 一格)
-SHIRT_A_OPTIONS = generate_options(13.0, 17.0, 0.5)  # 藍扯衫 a (13-17)
-SHIRT_B_OPTIONS = generate_options(28.0, 40.0, 0.5)  # 藍扯衫 b
-PANTS_W_OPTIONS = generate_options(26.0, 42.0, 0.5)  # 藍扯褲 waist (擴大到42以符合男性數據)
+SHIRT_A_OPTIONS = generate_options(13.0, 17.0, 0.5)  # 藍扯衫 a (肩寬/胸寬)
+SHIRT_B_OPTIONS = generate_options(28.0, 40.0, 0.5)  # 藍扯衫 b (衣長/袖長)
+PANTS_W_OPTIONS = generate_options(26.0, 42.0, 0.5)  # 藍扯褲 waist
 PANTS_L_OPTIONS = generate_options(36.0, 46.0, 0.5)  # 藍扯褲 length
 SAFETY_OPTIONS = generate_options(36.0, 48.0, 0.5)   # 安全鞋 (36-48)
 BOOTS_OPTIONS = generate_options(6.0, 11.0, 0.5)     # 水鞋 (US 6-11)
-
-# ============ 跨性別偏移量配置 ============
-# 移除鞋類偏移，因為男女生鞋碼標準相同
-FEMALE_OFFSET_CONFIG = {
-    "汗衣": {"chest": -1.5},
-    "藍扯衫": {"a": -1.0, "b": -1.5},
-    "藍扯褲": {"waist": -1.5, "length": -1.0},
-}
 
 # ============ Google Sheets 連接 ============
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -83,17 +75,12 @@ def to_size(item_type, dims):
         return min(HAN_YI_CHART, key=lambda x: abs(x[0] - dims["chest"]))[1]
     return None
 
-# ============ 推薦演算法 (KNN) ============
-def recommend_one(item_type, height, weight, target_gender, build, fit_pref, top_n=5, female_threshold=5):
+# ============ 推薦演算法 (KNN - 純同性別對比) ============
+def recommend_one(item_type, height, weight, target_gender, build, fit_pref, top_n=5):
     all_data = load_data()
-    same_gender_data = [p for p in all_data if p.get("gender", "男") == target_gender and item_type in p.get("items", {})]
     
-    is_using_offset = False
-    use_data = same_gender_data
-    
-    if target_gender == "女" and len(same_gender_data) < female_threshold:
-        use_data = [p for p in all_data if p.get("gender", "男") == "男" and item_type in p.get("items", {})]
-        is_using_offset = True
+    # 嚴格篩選同性別且有該品類數據的紀錄
+    use_data = [p for p in all_data if p.get("gender", "男") == target_gender and item_type in p.get("items", {})]
         
     if not use_data:
         return None
@@ -111,6 +98,7 @@ def recommend_one(item_type, height, weight, target_gender, build, fit_pref, top
     target_h_norm = (height - h_mean) / h_std
     target_bmi_norm = (input_bmi - b_mean) / b_std
     
+    # 權重解耦：褲子看重身高，上衣看重 BMI
     if item_type == "藍扯褲":
         w_height, w_bmi = 1.2, 0.8
     else:
@@ -124,6 +112,7 @@ def recommend_one(item_type, height, weight, target_gender, build, fit_pref, top
         
         dist = np.sqrt(w_height * ((p_h_norm - target_h_norm) ** 2) + w_bmi * ((p_bmi_norm - target_bmi_norm) ** 2))
         
+        # 身型懲罰
         if build and p.get("build") and build != p["build"]:
             dist += 0.5
             
@@ -141,12 +130,7 @@ def recommend_one(item_type, height, weight, target_gender, build, fit_pref, top
             
     raw_dims = {k: v / total_w for k, v in dims_sum.items()}
 
-    if is_using_offset and item_type in FEMALE_OFFSET_CONFIG:
-        offsets = FEMALE_OFFSET_CONFIG[item_type]
-        for k, offset_val in offsets.items():
-            if k in raw_dims:
-                raw_dims[k] += offset_val
-
+    # 穿著偏好微調
     adjust_val = 0
     if fit_pref == "寬鬆 / 預留空間":
         adjust_val = 1.0 if item_type != "汗衣" else 2.0
@@ -165,7 +149,7 @@ def recommend_one(item_type, height, weight, target_gender, build, fit_pref, top
                 dims[k] = round(v * 2) / 2
             
     size = to_size(item_type, dims)
-    return {"dims": dims, "size": size, "is_offset_used": is_using_offset}
+    return {"dims": dims, "size": size}
 
 # ============ 介面設計 ============
 st.title("👕 衣服尺寸推薦系統")
@@ -201,7 +185,7 @@ with tab1:
                 for t in ALL_ITEMS:
                     r = recommend_one(t, height, weight, gender, build, fit_pref)
                     if not r:
-                        st.info(f"❌ {t}：資料庫尚無此品類資料")
+                        st.info(f"❌ {t}：該性別資料庫尚無此品類資料")
                         continue
                     
                     if t == "汗衣":
@@ -223,9 +207,6 @@ with tab1:
                             c2.metric("建議尺碼", r["size"] or "—")
                         else:
                             st.metric("建議尺寸", dim_str)
-                            
-                        if r.get("is_offset_used"):
-                            st.caption("ℹ️ 女性樣本累積中，當前建議已套用人體工學比例轉換 (Gender Offset Mapping)。")
 
 # ---------- 定義共用彈窗 ----------
 if "dialog_type" not in st.session_state:
@@ -257,8 +238,10 @@ with tab2:
         
         st.markdown("**各品類尺寸 — 留空表示沒有**")
         
+        # 汗衣
         chest_display_sel = st.selectbox("汗衣 胸寬", ["留空"] + CHEST_OPTIONS_DISPLAY)
         
+        # 藍扯衫
         st.markdown("**藍扯衫尺寸**")
         cs1, cs2 = st.columns(2)
         with cs1:
@@ -266,6 +249,7 @@ with tab2:
         with cs2:
             shirt_b_sel = st.selectbox("藍扯衫 b (衣長/袖長)", ["留空"] + SHIRT_B_OPTIONS)
             
+        # 藍扯褲
         st.markdown("**藍扯褲尺寸**")
         cp1, cp2 = st.columns(2)
         with cp1:
@@ -273,6 +257,7 @@ with tab2:
         with cp2:
             pants_l_sel = st.selectbox("藍扯褲 褲長", ["留空"] + PANTS_L_OPTIONS)
 
+        # 鞋類
         cs1, cs2 = st.columns(2)
         with cs1:
             safety_sel = st.selectbox("安全鞋 尺寸", ["留空"] + SAFETY_OPTIONS)
@@ -283,15 +268,20 @@ with tab2:
         
         if submitted:
             items = {}
+            
             if chest_display_sel != "留空":
                 chest_val = float(chest_display_sel.split(" ")[0])
                 items["汗衣"] = {"chest": chest_val}
+                
             if shirt_a_sel != "留空" and shirt_b_sel != "留空":
                 items["藍扯衫"] = {"a": float(shirt_a_sel), "b": float(shirt_b_sel)}
+                
             if pants_w_sel != "留空" and pants_l_sel != "留空":
                 items["藍扯褲"] = {"waist": float(pants_w_sel), "length": float(pants_l_sel)}
+                
             if safety_sel != "留空":
                 items["安全鞋"] = {"size": float(safety_sel)}
+                
             if boots_sel != "留空":
                 items["水鞋"] = {"size": float(boots_sel)}
 
@@ -300,8 +290,14 @@ with tab2:
                 new_id = int(time.time() * 1000)
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
                 data.append({
-                    "id": new_id, "name": "匿名", "gender": gender_input, "build": build_input,
-                    "height": h, "weight": w, "items": items, "created_at": current_time
+                    "id": new_id, 
+                    "name": "匿名", 
+                    "gender": gender_input,
+                    "build": build_input,
+                    "height": h, 
+                    "weight": w, 
+                    "items": items,
+                    "created_at": current_time
                 })
                 if save_data(data):
                     st.session_state.dialog_type = "新增"
@@ -320,8 +316,12 @@ with tab3:
         display_table = []
         for p in data:
             row = {
-                "ID": p.get("id", "-"), "性別": p.get("gender", "-"), "身型": p.get("build", "-"),
-                "新增時間": p.get("created_at", "-"), "身高(cm)": p["height"], "體重(kg)": p["weight"]
+                "ID": p.get("id", "-"), 
+                "性別": p.get("gender", "-"),
+                "身型": p.get("build", "-"),
+                "新增時間": p.get("created_at", "-"),
+                "身高(cm)": p["height"], 
+                "體重(kg)": p["weight"]
             }
             for t in ALL_ITEMS:
                 if t in p.get("items", {}):
@@ -342,6 +342,9 @@ with tab3:
             
         st.dataframe(display_table, use_container_width=True, hide_index=True)
         
+        # ==========================================
+        # 數據視覺化
+        # ==========================================
         st.markdown("---")
         st.markdown("### 📈 各品類尺寸分佈圖")
         
@@ -364,11 +367,21 @@ with tab3:
                     label = f"US {dims.get('size', '')}"
                 
                 if label:
-                    chart_data.append({"身高": p["height"], "體重": p["weight"], "尺寸": str(label)})
+                    chart_data.append({
+                        "身高": p["height"],
+                        "體重": p["weight"],
+                        "尺寸": str(label)
+                    })
         
         if chart_data:
             df_chart = pd.DataFrame(chart_data)
-            st.scatter_chart(df_chart, x="身高", y="體重", color="尺寸", use_container_width=True)
+            st.scatter_chart(
+                df_chart,
+                x="身高",
+                y="體重",
+                color="尺寸",
+                use_container_width=True
+            )
             st.caption("💡 提示：滑鼠懸停在點上可查看詳細數值。不同顏色代表不同的尺寸，方便觀察群聚效應與異常值。")
         else:
             st.info(f"尚無足夠的 {chart_item} 數據可供繪製圖表。")
@@ -438,13 +451,16 @@ with tab3:
                         st.write("修改尺寸（全部使用下拉選單）：")
                         old_items = selected_person.get("items", {})
                         
+                        # 汗衣
                         old_chest = old_items.get("汗衣", {}).get("chest", None)
                         old_chest_display = "留空"
                         if old_chest in CHEST_OPTIONS_RAW:
                             idx = CHEST_OPTIONS_RAW.index(old_chest)
                             old_chest_display = CHEST_OPTIONS_DISPLAY[idx]
+                            
                         chest_edit_display = st.selectbox("汗衣 胸寬", ["留空"] + CHEST_OPTIONS_DISPLAY, index=(["留空"] + CHEST_OPTIONS_DISPLAY).index(old_chest_display))
                         
+                        # 藍扯衫
                         st.markdown("**藍扯衫尺寸**")
                         old_shirt = old_items.get("藍扯衫", {})
                         cs1, cs2 = st.columns(2)
@@ -455,6 +471,7 @@ with tab3:
                             default_b = old_shirt.get("b", "留空")
                             shirt_b_edit = st.selectbox("藍扯衫 b (衣長/袖長)", ["留空"] + SHIRT_B_OPTIONS, index=(["留空"] + SHIRT_B_OPTIONS).index(default_b) if default_b in SHIRT_B_OPTIONS else 0)
                         
+                        # 藍扯褲
                         st.markdown("**藍扯褲尺寸**")
                         old_pants = old_items.get("藍扯褲", {})
                         cp1, cp2 = st.columns(2)
@@ -465,6 +482,7 @@ with tab3:
                             default_l = old_pants.get("length", "留空")
                             pants_l_edit = st.selectbox("藍扯褲 褲長", ["留空"] + PANTS_L_OPTIONS, index=(["留空"] + PANTS_L_OPTIONS).index(default_l) if default_l in PANTS_L_OPTIONS else 0)
 
+                        # 安全鞋與水鞋
                         cs1, cs2 = st.columns(2)
                         old_safety = old_items.get("安全鞋", {}).get("size", "留空")
                         with cs1:
@@ -478,9 +496,11 @@ with tab3:
                         
                         if update_btn:
                             new_items = {}
+                            
                             if chest_edit_display != "留空":
                                 chest_val = float(chest_edit_display.split(" ")[0])
                                 new_items["汗衣"] = {"chest": chest_val}
+                                
                             if shirt_a_edit != "留空" and shirt_b_edit != "留空":
                                 new_items["藍扯衫"] = {"a": float(shirt_a_edit), "b": float(shirt_b_edit)}
                             if pants_w_edit != "留空" and pants_l_edit != "留空":
@@ -490,10 +510,11 @@ with tab3:
                             
                             for i, p in enumerate(data):
                                 if p.get("id") == selected_person.get("id"):
-                                    data[i].update({
-                                        "gender": edit_gender, "build": edit_build, "height": new_h,
-                                        "weight": new_w, "items": new_items
-                                    })
+                                    data[i]["gender"] = edit_gender
+                                    data[i]["build"] = edit_build
+                                    data[i]["height"] = new_h
+                                    data[i]["weight"] = new_w
+                                    data[i]["items"] = new_items
                                     break
                                     
                             if save_data(data):
